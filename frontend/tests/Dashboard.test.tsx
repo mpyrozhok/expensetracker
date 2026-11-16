@@ -157,6 +157,24 @@ describe('Dashboard', () => {
     );
     await waitFor(() => expect(screen.getByLabelText('Budget for March 2026')).toHaveValue('750'));
   });
+
+  it('shows a visible loading state instead of invented numbers', () => {
+    const view = render(<Dashboard {...dashboardProps(null)} loading />);
+
+    // The brief asks for at least one visible loading state, and the moment it
+    // matters is when there is no data yet: a "$0.00" rendered while the month
+    // is still in flight is indistinguishable from a month with nothing spent.
+    expect(view.container.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(view.container.querySelectorAll('.skeleton--stat')).toHaveLength(4);
+    expect(view.queryByText('Total spent')).toBeNull();
+    expect(view.queryByText('Budget usage')).toBeNull();
+
+    // Once data arrives the same screen shows the real figures.
+    view.unmount();
+    const loaded = render(<Dashboard {...dashboardProps(summaryFixture())} />);
+    expect(loaded.container.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(loaded.queryByText('Total spent')).not.toBeNull();
+  });
 });
 
 function dashboardProps(summary: ApiSummary | null): React.ComponentProps<typeof Dashboard> {

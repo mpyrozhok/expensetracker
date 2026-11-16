@@ -10,7 +10,7 @@ import {
   type LiveApp,
   type TestApp,
 } from './helpers.js';
-import type { ApiAlert, ServerMessage } from '../src/types.js';
+import type { ApiAlert, Period, ServerMessage } from '../src/types.js';
 
 type AlertsFrame = Extract<ServerMessage, { type: 'budget-alerts' }>;
 
@@ -389,5 +389,81 @@ describe('budget alerts over WebSocket', () => {
     cookieSocket.close();
     ctx.socket.close();
     await ctx.closeLive();
+  });
+});
+
+/** A month the app is not alerting on: same day number, one month back. */
+function otherPeriod(now = new Date()): Period {
+  const d = new Date(now.getFullYear(), now.getMonth() - 1, 15);
+  return { year: d.getFullYear(), month: d.getMonth() + 1 };
+}
+
+const dayIn = (period: Period, day: number): string =>
+  `${period.year}-${String(period.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+describe('subscribe and the current-month alert rule', () => {
+  it('records nothing when a socket subscribes to a month it is not alerting on', async () => {
+    const harness = await setupLive();
+    const userId = harness.api.userId();
+    const period = otherPeriod();
+    // $250 spent against a $100 budget, so every threshold would be crossed if
+    // looking at this month were the same as living in it.
+    await harness.api.put('/api/budgets').send({ ...period, amount: 100 }).expect(200);
+    await spend(harness, harness.categoryId, 250, dayIn(period, 5));
+
+    const before = harness.ctx.alerts.firedThresholds(userId, period);
+    expect(before).toEqual([]);
+
+    harness.socket.subscribe(period);
+    await harness.socket.waitForType('subscription');
+    const frame = (await harness.socket.waitForType('budget-alerts')) as AlertsFrame;
+
+    expect(frame.alerts).toEqual([]);
+    expect(harness.ctx.alerts.firedThresholds(userId, period)).toEqual([]);
+    harness.socket.close();
+    await harness.closeLive();
+  });
+
+  it('replays a recorded ledger for another month without adding to it', async () => {
+    const harness = await setupLive();
+    const userId = harness.api.userId();
+    const period = otherPeriod();
+    await harness.api.put('/api/budgets').send({ ...period, amount: 100 }).expect(200);
+    await spend(harness, harness.categoryId, 120, dayIn(period, 5));
+
+    // What the ledger holds once that month has been evaluated while it was
+    // current; subscribing later must show these and record no more.
+    harness.ctx.alerts.evaluate(userId, period);
+    const recorded = harness.ctx.alerts.firedThresholds(userId, period);
+    // 120% of budget: every threshold was crossed at once, so all three are in
+    // the ledger before the socket looks at it.
+    expect(recorded).toEqual([50, 80, 100]);
+
+    harness.socket.subscribe(period);
+    await harness.socket.waitForType('subscription');
+    const frame = (await harness.socket.waitForType('budget-alerts')) as AlertsFrame;
+
+    expect(frame.alerts.map((a) => a.threshold)).toEqual(recorded);
+    // Replayed, not new: the client must not toast what it is only catching up on.
+    expect(frame.alerts.every((alert) => alert.new === false)).toBe(true);
+    expect(harness.ctx.alerts.firedThresholds(userId, period)).toEqual(recorded);
+    harness.socket.close();
+    await harness.closeLive();
+  });
+
+  it('still generates on subscribe for the month being alerted on', async () => {
+    const harness = await setupLive();
+    const period = currentPeriod();
+    await harness.api.put('/api/budgets').send({ ...period, amount: 100 }).expect(200);
+    await spend(harness, harness.categoryId, 60, dayIn(period, 6));
+
+    harness.socket.subscribe(period);
+    await harness.socket.waitForType('subscription');
+    const frame = (await harness.socket.waitForType('budget-alerts')) as AlertsFrame;
+
+    expect(frame.alerts.map((a) => a.threshold)).toEqual([50]);
+    expect(frame.alerts[0].new).toBe(true);
+    harness.socket.close();
+    await harness.closeLive();
   });
 });

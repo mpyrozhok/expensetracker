@@ -122,6 +122,37 @@ export class AlertService {
   }
 
   /**
+   * Alerts already in the ledger for a period, without evaluating or firing
+   * anything. Used when a socket subscribes to a period the app does not
+   * calculate alerts for: the spec keeps threshold alerts to the current
+   * calendar month, so viewing last month may show what was recorded while it
+   * was current, but must never record something new now that we are looking.
+   */
+  recorded(userId: number, period: Period): ApiAlert[] {
+    const budget = this.db.prepare(SELECT_BUDGET).get(userId, period.year, period.month) as
+      | BudgetRowLite
+      | undefined;
+    if (!budget) return [];
+    const rows = this.db.prepare(SELECT_FIRES).all(userId, period.year, period.month) as FireRow[];
+    const spent = spentForPeriod(this.db, userId, period);
+    return rows
+      .sort((a, b) => a.threshold - b.threshold)
+      .map((row) =>
+        buildAlert({
+          userId,
+          period,
+          threshold: row.threshold,
+          budgetCents: budget.amount_cents,
+          spentCents: spent.spent_cents,
+          currency: budget.currency as Currency,
+          firedAt: row.fired_at,
+          readAt: row.read_at,
+          fresh: false,
+        }),
+      );
+  }
+
+  /**
    * Records that the user acknowledged a threshold alert. Returns false when the
    * threshold has not fired for that user and period, so a forged ack cannot
    * write anything that is not already in the ledger.

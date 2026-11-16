@@ -5,9 +5,11 @@ import type { AppConfig } from '../config.js';
 import type { AlertService } from '../services/alerts.js';
 import type { UsersService } from '../services/users.js';
 import { originBelongsToApp } from '../middleware.js';
+import { isCurrentPeriod } from '../clock.js';
 import { extractSessionToken } from '../session.js';
 import {
   BUDGET_ALERT_THRESHOLDS,
+  type ApiAlert,
   type Period,
   type ServerMessage,
 } from '../types.js';
@@ -39,8 +41,9 @@ interface Client {
  *
  * `subscribe` is the meaningful client → server message: the server only ever
  * pushes alerts for a period the socket explicitly subscribed to, and a
- * subscribe both (a) arms evaluation for that period and (b) replays the ledger
- * so the client sees which thresholds already fired this month.
+ * subscribe both (a) arms evaluation when that period is the current calendar
+ * month - the only month alerts are calculated for - and (b) replays the ledger
+ * so the client sees which thresholds already fired there.
  * `ack` marks an alert read and is confirmed with `alert-read`.
  *
  * Authorization: the upgrade request must carry the same session credential as
@@ -190,14 +193,21 @@ export class BudgetHub {
     client.subscription = { period };
     send(client.socket, { type: 'subscription', channel: BUDGET_ALERTS_CHANNEL, period, ok: true });
 
-    // Alert generation point #1: the connection/subscription just opened.
-    const evaluation = this.alerts.evaluate(client.userId, period);
-    if (!evaluation) {
-      // No budget for this month: explicit empty state, never misleading numbers.
-      send(client.socket, { type: 'budget-alerts', period, alerts: [] });
-      return;
-    }
-    send(client.socket, { type: 'budget-alerts', period, alerts: this.alerts.toAlerts(client.userId, evaluation) });
+    // Alert generation point #1: the subscription just opened - for the current
+    // calendar month only. A socket may subscribe to any month the user is
+    // browsing, and evaluating one of those would record threshold crossings
+    // after the fact, which is what the once-per-threshold-per-month rule is
+    // protecting. Any other period replays whatever its ledger already holds.
+    const alerts = isCurrentPeriod(period)
+      ? this.generatedAlerts(client.userId, period)
+      : this.alerts.recorded(client.userId, period);
+    send(client.socket, { type: 'budget-alerts', period, alerts });
+  }
+
+  /** Evaluate the month alerts are calculated for; no budget means no alerts. */
+  private generatedAlerts(userId: number, period: Period): ApiAlert[] {
+    const evaluation = this.alerts.evaluate(userId, period);
+    return evaluation ? this.alerts.toAlerts(userId, evaluation) : [];
   }
 
   private onAck(client: Client, message: InboundMessage): void {

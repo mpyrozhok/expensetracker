@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { AppContext } from './context.js';
 import type { BudgetBody, CategoryBody, MockLoginBody, QueryString, TransactionBody } from './bodies.js';
 import { clearSessionCookie, requireUser, setSessionCookie, wrap, type AuthedRequest } from './middleware.js';
+import { currentPeriod } from './clock.js';
 import { redirectAllowlisted } from './redirect.js';
 import {
   buildAuthorizeUrl,
@@ -66,11 +67,6 @@ function parseCategoryIds(raw: string | undefined): number[] {
     throw badRequest('category_ids_invalid', `category_ids accepts at most ${MAX_CATEGORY_FILTER} values`);
   }
   return ids;
-}
-
-/** Current calendar month, which is the only period automatic alerts target. */
-export function currentPeriod(now = new Date()): Period {
-  return { year: now.getFullYear(), month: now.getMonth() + 1 };
 }
 
 export function buildRouter(ctx: AppContext): Router {

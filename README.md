@@ -367,15 +367,20 @@ panel only). Malformed frames get an `error` frame (`invalid_json`,
 ### Alert rules
 
 * Thresholds **50, 80 and 100** percent of the month's budget.
-* Alerts are calculated for the **current calendar month only**. A mutation in
-  another month updates the numbers but pushes nothing.
+* Alerts are calculated for the **current calendar month only**, and that word is
+  doing work: a mutation in another month updates the numbers but pushes nothing,
+  and *looking* at another month records nothing either. Subscribing to a month
+  that is not the current one replays its ledger exactly as it stands — so last
+  month still shows what was recorded while it was current — but performs no
+  evaluation, because firing an alert for December in November would break the
+  once-per-threshold-per-month rule the moment anyone browsed a calendar.
 * A threshold fires **once per user + period + threshold**, ever. The ledger is
   the `budget_alert_fires` table with `UNIQUE(user_id, year, month, threshold)`
   filled by `INSERT OR IGNORE`, so it survives reconnects **and** restarts:
   editing or deleting transactions after a crossing cannot re-alert or spam.
-* Alerts are generated when a client **subscribes** (which happens on connect and
-  whenever the viewed month changes) and after a transaction is **created,
-  updated or deleted** or a budget is set/removed.
+* Alerts are generated when a client **subscribes to the current month** (which
+  happens on connect and whenever the viewed month changes) and after a
+  transaction is **created, updated or deleted** or a budget is set/removed.
 * **No budget for the month → no alerts at all**, and the UI shows the explicit
   "No budget set" state instead of a percentage.
 * Acknowledgement is durable too: `read_at` lives on the ledger row, so an alert
@@ -577,7 +582,9 @@ So the boundary of the testing is explicit rather than implied:
   visual quality: spacing, colour and type hierarchy were read from the DOM and
   computed styles rather than judged, no screenshot has been compared against
   anything, only Chromium has been used, and no screen reader has read the app.
-* **`docker compose`**, as above.
+* **`docker compose` has never been run** — no compose binary exists on this
+  machine, so `compose up` is untested even though everything it describes is
+  (see the block above this list).
 * **Single-user scale.** The SQLite write path, WAL checkpointing and many
   concurrent sockets have not been load-tested; the app is correct at the scale of
   one person's finances, which is what the brief asked for.
