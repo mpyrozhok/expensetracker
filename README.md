@@ -556,10 +556,16 @@ So the boundary of the testing is explicit rather than implied:
   redirect URI registered, and PKCE plus ID token signature validation are still
   open (below). Everything up to and after the network call is tested; the network
   call itself is not.
-* **Nobody has looked at the running UI in a browser.** Layout, focus rings and
-  responsive behaviour are covered by CSS rules and by component tests under
-  `jsdom`, and every screen has been driven at the HTTP level — but no pixel has
-  been rendered and checked. Screenshots have not been compared against anything.
+* **The browser pass checked behaviour, not appearance.** The app was driven in a
+  real Chromium: stub sign-in, session survival across a reload, category create
+  through the form, the transaction modal and its client-side validation, budget
+  save and the arithmetic it produced, a 50% alert arriving live over the socket,
+  dismissing it, sign-out revocation, and a 414 px viewport. That proves what
+  rendered, what it said, whether a request was sent, whether the desktop table
+  gave way to cards, and that no JS or console error appeared. It does not prove
+  visual quality: spacing, colour and type hierarchy were read from the DOM and
+  computed styles rather than judged, no screenshot has been compared against
+  anything, only Chromium has been used, and no screen reader has read the app.
 * **`docker compose`**, as above.
 * **Single-user scale.** The SQLite write path, WAL checkpointing and many
   concurrent sockets have not been load-tested; the app is correct at the scale of
@@ -597,5 +603,10 @@ So the boundary of the testing is explicit rather than implied:
   origin including the port once the front door is one origin anyway.
 * Pagination is `limit`/`offset`; at very large row counts a keyset cursor would
   be steadier.
-* The frontend relies on the WS reconnect loop plus re-fetch on focus; a
-  service worker and offline queue would make it resilient to a dead backend.
+* **Live alerts, but data is refreshed by events rather than continuously.**
+  Threshold crossings arrive over the WebSocket in every open tab, immediately.
+  REST data — transactions, categories, budget summary — refetches on boot, on
+  month change, after a mutation and on retry, so a change made in another tab or
+  by another process appears at the next such event, not at once. A focus or
+  `visibilitychange` refetch would close that gap; a service worker and offline
+  queue would make it resilient to a dead backend.
