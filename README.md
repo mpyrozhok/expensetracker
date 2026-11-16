@@ -180,7 +180,15 @@ return another user's row, which the test suite pins directly.
   allow-listed enum. An unknown `sort` value is a 400, never interpolated — the
   smoke check asserts exactly that.
 * **OAuth state**: signed, provider-bound, nonce-carrying, and verified before
-  the code is exchanged (`oauth_state_mismatch` on failure).
+  the code is exchanged (`oauth_state_mismatch` on failure). A provider refusal
+  travels back to the sign-in screen as `?auth_error=<code>`, and only after that
+  state check — otherwise a third party could push text into the app's own URL.
+  The code is never rendered as received: the client maps it through a fixed
+  table and falls back to a generic sentence if it is not a plain token.
+* **Cross-site WebSocket**: an upgrade carrying an `Origin` from another host is
+  refused with `403`. Browsers attach the session cookie to a socket handshake
+  automatically and ignore `SameSite` for `ws:`, so without this check any page
+  could open a read-only view of a signed-in visitor's alerts and spending.
 * **Headers**: `X-Content-Type-Options`, `X-Frame-Options: DENY`,
   `Referrer-Policy: same-origin`, and a CSP that keeps everything `'self'` plus
   `ws:`/`https:` image and socket sources.
@@ -514,6 +522,7 @@ cd docker && SESSION_SECRET=$(openssl rand -hex 32) docker compose up --build
 | `GET /` on the container | 200 `text/html`, the SPA document, with `/api/*` still answering JSON |
 | `ls /data` inside the container | `app.db`, `app.db-shm`, `app.db-wal` — WAL works on the mounted volume as the non-root user |
 | `docker restart` | the row created before it, and the session issued before it, are both still there afterwards |
+| after the WebSocket origin check | image rebuilt, **42/42 again** on the pre-existing volume (so the additive migration ran on an existing database), and a handshake from `https://evil.example` into the container answered `403 4403 origin_not_allowed` while the app's own origin was accepted |
 
 Building it found two real problems, both now fixed in the Dockerfile:
 
@@ -536,6 +545,28 @@ Building it found two real problems, both now fixed in the Dockerfile:
 > same port mapping and a named volume at `/data`. The compose file's YAML was
 > checked structurally, but treat the `compose up` path as untested until it runs
 > where compose exists.
+
+### What has not been verified, in plain terms
+
+So the boundary of the testing is explicit rather than implied:
+
+* **No real Google or GitHub sign-in has ever been attempted.** The code exchange,
+  profile fetch and account upsert run against a stubbed `fetch` with recorded
+  provider payloads, in tests and in the smoke run alike. A real tenant needs the
+  redirect URI registered, and PKCE plus ID token signature validation are still
+  open (below). Everything up to and after the network call is tested; the network
+  call itself is not.
+* **Nobody has looked at the running UI in a browser.** Layout, focus rings and
+  responsive behaviour are covered by CSS rules and by component tests under
+  `jsdom`, and every screen has been driven at the HTTP level — but no pixel has
+  been rendered and checked. Screenshots have not been compared against anything.
+* **`docker compose`**, as above.
+* **Single-user scale.** The SQLite write path, WAL checkpointing and many
+  concurrent sockets have not been load-tested; the app is correct at the scale of
+  one person's finances, which is what the brief asked for.
+* **One browser engine, and no assistive technology.** Everything checked here runs
+  in Chromium-family code paths; `aria` attributes and focus styles are present
+  and asserted in tests, but no screen reader has read the app.
 
 ---
 
