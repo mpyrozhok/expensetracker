@@ -28,10 +28,10 @@ npm run dev          # backend on :8787, frontend on :5173, proxy preconfigured
 Open <http://localhost:5173>.
 
 `ALLOW_MOCK_AUTH` defaults to on outside production, so the sign-in screen shows
-an **SSO stub** form next to the two provider buttons: type a username, pick a
-provider, and you are signed in. That path provisions the local user record and
-issues the same session cookie a real callback does — only the Google/GitHub
-HTTP calls are replaced. With no provider credentials configured, the "Continue
+a **"Stub identity"** form under the two provider buttons: type a name, press
+**Stub as Google** or **Stub as GitHub**, and you are signed in. That path
+provisions the local user record and issues the same session cookie a real
+callback does — only the Google/GitHub HTTP calls are replaced. With no provider credentials configured, the "Continue
 with Google/GitHub" buttons answer `501 oauth_not_configured` and the screen says
 so instead of failing silently.
 
@@ -420,12 +420,14 @@ search/sort/paging, per-user isolation, and logout revocation.
 Light theme only, one stylesheet with design tokens (spacing scale, type scale,
 radii, shadows).
 
-* **Sign-in** — `Continue with Google`, `Continue with GitHub`, provider
-  availability, and the SSO stub form when it is enabled.
+* **Sign-in** — `Continue with Google`, `Continue with GitHub`, per-provider
+  availability, and the `Stub identity` form (`Stub as Google` / `Stub as
+  GitHub`) when `ALLOW_MOCK_AUTH` is on.
 * **Dashboard** — for the selected month: total spent, budget, remaining, usage
   percentage with a step progress bar, transaction count, over-budget styling,
-  inline budget set/clear. With no budget: an explicit "No budget set" state and
-  no percentage.
+  inline budget set/clear. With no budget: an explicit
+  *"No budget for `<Month>` yet — set one below to enable 50% / 80% / 100%
+  alerts"* state and no percentage.
 * **Transactions** — table on desktop, cards under 720 px; search input, category
   chips with counts, date-range presets (this month / last month / custom),
   min/max amount, sort, pagination; create/edit in a modal with client-side
@@ -435,10 +437,13 @@ radii, shadows).
 * **Alerts** — toast for a newly crossed threshold, panel for the month's ledger,
   connection badge with reconnect.
 * **States** — skeletons on the first load of each data block, inline errors with
-  retry, and four distinct empty states (no transactions this month, no search
-  results, no categories, no budget set). Hover and focus are styled on every
-  interactive element; the app is keyboard navigable and uses ARIA labels on
-  icon-only buttons.
+  retry, and distinct empty states with their own copy: *No transactions in this
+  month*, *No transactions match those filters*, *No categories yet*,
+  *No budget for … yet*, *No alerts for this month*. Hover, `:focus`,
+  `:focus-visible` and `:active` are styled (15 hover and 12 focus rules in the
+  built sheet); the app is keyboard navigable and uses ARIA labels on icon-only
+  buttons. The production bundle contains no inline `style` attributes — width
+  steps, tones and progress bars are all classes.
 * Currency is explicit and single: **USD**, labelled in the amount inputs and
   every figure. Amounts are integer cents server-side, so no float drift.
 
