@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Transactions } from '../src/components/Transactions.js';
+import { currentPeriod, shiftPeriod } from '../src/lib/format.js';
 import type { ApiCategory, ApiTransaction, TransactionQuery } from '../src/lib/types.js';
 import { EMPTY_QUERY } from '../src/lib/types.js';
 import { category as categoryFixture, transaction as transactionFixture } from './fixtures.js';
@@ -31,6 +32,7 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof Transactions
     error: null,
     onRetry: vi.fn(),
     onQueryChange: vi.fn(),
+    onPeriodChange: vi.fn(),
     onPageChange: vi.fn(),
     onEdit: vi.fn(),
     onDelete: vi.fn(),
@@ -179,24 +181,90 @@ describe('Transactions', () => {
     expect(props.onQueryChange).toHaveBeenCalledWith(queryWith({ q: 'shop', sort: 'amount_asc' }));
   });
 
-  it('narrows the period with an explicit date range', async () => {
-    const { props } = renderPanel();
+  it('shows the month bounds but will not edit them while the range follows the month', () => {
+    renderPanel();
 
-    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-03-05' } });
-    expect(props.onQueryChange).toHaveBeenLastCalledWith(queryWith({ from: '2026-03-05' }));
-
-    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-03-20' } });
-    expect(props.onQueryChange).toHaveBeenLastCalledWith(queryWith({ to: '2026-03-20' }));
-    // Each control changes only its own bound value, so nothing else is reset.
-    expect(vi.mocked(props.onQueryChange).mock.calls[1]?.[0]?.from).toBeNull();
+    // The bounds are printed rather than blank, so the field explains what is
+    // being queried instead of looking like an unfilled filter.
+    expect(screen.getByLabelText('From')).toHaveValue('2026-03-01');
+    expect(screen.getByLabelText('To')).toHaveValue('2026-03-31');
+    expect(screen.getByLabelText('From')).toBeDisabled();
+    expect(screen.getByLabelText('To')).toBeDisabled();
+    expect(screen.getByText('Dates follow March 2026. Choose Custom… to pick your own.')).toBeInTheDocument();
   });
 
-  it('jumps back to the whole month, dropping the custom range', async () => {
-    const { props } = renderPanel({ query: queryWith({ from: '2026-03-05', to: '2026-03-10' }) });
+  it('choosing Custom… prefills the month it is replacing', async () => {
+    const { props } = renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: /custom/i }));
+
+    expect(props.onQueryChange).toHaveBeenLastCalledWith(
+      queryWith({ range: 'custom', from: '2026-03-01', to: '2026-03-31' }),
+    );
+  });
+
+  it('narrows the period with an explicit date range', async () => {
+    const { props } = renderPanel({ query: queryWith({ range: 'custom' }) });
+
+    expect(screen.getByLabelText('From')).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-03-05' } });
+    expect(props.onQueryChange).toHaveBeenLastCalledWith(queryWith({ range: 'custom', from: '2026-03-05' }));
+
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-03-20' } });
+    expect(props.onQueryChange).toHaveBeenLastCalledWith(queryWith({ range: 'custom', to: '2026-03-20' }));
+  });
+
+  it('names the dates it is showing once they stop being the selected month', () => {
+    renderPanel({
+      query: queryWith({ range: 'custom', from: '2026-03-05', to: '2026-03-10' }),
+      filteredTotal: 2,
+      filteredAmount: 90.6,
+    });
+
+    // The overview above still describes March, so the list has to say it does
+    // not cover March.
+    expect(screen.getByText(/2 matching · \$90\.60 in view · Mar 5 – Mar 10, 2026/)).toBeInTheDocument();
+    expect(screen.getByText('Custom dates. The selected month still drives the budget and alerts.')).toBeInTheDocument();
+  });
+
+  it('"This month" moves the selected month and hands the dates back to it', async () => {
+    const { props } = renderPanel({ query: queryWith({ range: 'custom', from: '2026-03-05', to: '2026-03-10' }) });
 
     await userEvent.click(screen.getByRole('button', { name: /this month/i }));
 
-    expect(props.onQueryChange).toHaveBeenCalledWith(queryWith({ from: null, to: null }));
+    // Not "the selected month" under another name: it goes to today's month and
+    // clears the typed bounds, so header and list agree afterwards.
+    expect(props.onPeriodChange).toHaveBeenCalledWith(currentPeriod());
+    expect(props.onQueryChange).toHaveBeenCalledWith(queryWith({ range: 'period', from: null, to: null }));
+  });
+
+  it('"Last month" is one click, not a click plus a back arrow', async () => {
+    const { props } = renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: /last month/i }));
+
+    expect(props.onPeriodChange).toHaveBeenCalledWith(shiftPeriod(currentPeriod(), -1));
+    expect(props.onQueryChange).toHaveBeenCalledWith(queryWith({ range: 'period', from: null, to: null }));
+  });
+
+  it('shows which range is in force, including when the month is neither preset', () => {
+    const cases: Array<{ period: { year: number; month: number }; range: 'period' | 'custom'; pressed: string[] }> = [
+      { period: currentPeriod(), range: 'period', pressed: ['This month'] },
+      { period: shiftPeriod(currentPeriod(), -1), range: 'period', pressed: ['Last month'] },
+      { period: { year: 2026, month: 3 }, range: 'period', pressed: [] },
+      { period: { year: 2026, month: 3 }, range: 'custom', pressed: ['Custom…'] },
+    ];
+
+    for (const testCase of cases) {
+      const view = renderPanel({ period: testCase.period, query: queryWith({ range: testCase.range }) });
+      const pressed = screen
+        .getAllByRole('button', { name: /this month|last month|custom/i })
+        .filter((button) => button.getAttribute('aria-pressed') === 'true')
+        .map((button) => button.textContent);
+      expect(pressed).toEqual(testCase.pressed);
+      view.unmount();
+    }
   });
 
   it('clears every filter at once when any are active', async () => {

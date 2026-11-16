@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api.js';
-import { periodBounds } from '../lib/format.js';
+import { resolveDateRange } from '../lib/format.js';
 import type { ApiCategory, ApiSummary, ApiTransaction, Period, TransactionQuery } from '../lib/types.js';
 import { EMPTY_QUERY } from '../lib/types.js';
 
@@ -111,18 +111,19 @@ export function useExpenseData(period: Period): ExpenseData {
 
   /** Selected month plus active filters, translated into API parameters. */
   const listParams = useMemo(() => {
-    const bounds = periodBounds(period);
-    const customRange = query.from !== null || query.to !== null;
+    // Whichever of the selected month or a typed range wins is decided in one
+    // place, shared with the label the list prints beside its totals.
+    const range = resolveDateRange(period, query);
     return {
       q: query.q,
       category_ids: query.category_ids.map(String),
-      from: customRange ? (query.from ?? bounds.from) : bounds.from,
-      to: customRange ? (query.to ?? bounds.to) : bounds.to,
+      from: range.from,
+      to: range.to,
       min: query.min,
       max: query.max,
       sort: query.sort,
-      // The list endpoint pages with limit/offset; the month picker becomes an
-      // inclusive from/to range, so paging and month selection compose.
+      // The list endpoint pages with limit/offset; the range above is inclusive,
+      // so paging and range selection compose.
       limit: PAGE_SIZE,
       offset: (page - 1) * PAGE_SIZE,
     };

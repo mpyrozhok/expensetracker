@@ -3,12 +3,15 @@ import {
   clampPercent,
   currentPeriod,
   describeAuthError,
+  formatDateRange,
   formatDay,
   formatMoney,
   formatMonth,
   percent,
   periodBounds,
   periodLabel,
+  resolveDateRange,
+  samePeriod,
   shiftPeriod,
   todayIso,
 } from '../src/lib/format.js';
@@ -108,5 +111,43 @@ describe('describeAuthError', () => {
     expect(describeAuthError('a'.repeat(80))).toBe(
       'Sign-in did not complete (unknown). Try again, or use the other provider.',
     );
+  });
+});
+
+describe('samePeriod', () => {
+  it('compares periods by value, not identity', () => {
+    expect(samePeriod({ year: 2026, month: 3 }, { year: 2026, month: 3 })).toBe(true);
+    expect(samePeriod({ year: 2026, month: 3 }, { year: 2025, month: 12 })).toBe(false);
+  });
+});
+
+describe('resolveDateRange', () => {
+  const period = { year: 2026, month: 3 };
+
+  it('follows the selected month, ignoring bounds left over from a custom range', () => {
+    // Bounds are cleared when a preset is chosen, but a stale pair must never
+    // silently win over the month the header shows.
+    expect(resolveDateRange(period, { range: 'period', from: '2026-01-05', to: null })).toEqual({
+      from: '2026-03-01',
+      to: '2026-03-31',
+    });
+  });
+
+  it('honours a custom range, filling an open end from the selected month', () => {
+    expect(resolveDateRange(period, { range: 'custom', from: '2026-03-05', to: null })).toEqual({
+      from: '2026-03-05',
+      to: '2026-03-31',
+    });
+  });
+});
+
+describe('formatDateRange', () => {
+  it('prints the year once while the range stays inside it', () => {
+    expect(formatDateRange('2026-03-05', '2026-03-10')).toBe('Mar 5 – Mar 10, 2026');
+    expect(formatDateRange('2026-03-05', '2026-03-05')).toBe('Mar 5, 2026');
+  });
+
+  it('prints both years when the range crosses a year boundary', () => {
+    expect(formatDateRange('2025-12-20', '2026-03-10')).toBe('Dec 20, 2025 – Mar 10, 2026');
   });
 });

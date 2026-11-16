@@ -310,6 +310,11 @@ Infinity and used to reach SQLite as a bind value and answer `500`. The response
 carries the page plus aggregate context, so the footer and the category chips
 agree with the filters rather than with the visible page:
 
+The client always sends an inclusive `from`/`to` pair, since that is the only
+shape the date filter has; which pair it sends is decided in one frontend
+function (`resolveDateRange`) that the label beside the totals also calls, so the
+range the list describes is the range it fetched rather than a guess at it.
+
 ```json
 { "items": [...], "total": 42, "total_amount": 1234.5,
   "by_category": [{ "category_id": 3, "name": "Groceries", "amount": 420.1, "count": 12 }] }
@@ -488,9 +493,19 @@ radii, shadows).
   *"No budget for `<Month>` yet — set one below to enable 50% / 80% / 100%
   alerts"* state and no percentage.
 * **Transactions** — table on desktop, cards under 720 px; search input, category
-  chips with counts, date-range presets (this month / last month / custom),
-  min/max amount, sort, pagination; create/edit in a modal with client-side
-  validation and dirty-state protection; delete behind a confirm.
+  chips with counts, min/max amount, sort, pagination; create/edit in a modal with
+  client-side validation and dirty-state protection; delete behind a confirm.
+  Dates are an explicit state rather than something inferred from whether two
+  inputs happen to be filled, because the brief names three choices: **This
+  month**, **Last month** and **Custom…** are chips, and the one in force is
+  visibly pressed. The two presets *are* month changes — they move the selected
+  month, so overview, budget, alerts and list follow it together, and "this
+  month" cannot mean "whatever month is selected" (the button that meant that was
+  labelled "This month"). `Custom…` belongs to the list alone: the selected month
+  keeps driving the budget and alerts, and the list says so in its own footer
+  (`7 matching · $178.00 in view · Nov 5 – Nov 30, 2026`). `From`/`To` display the
+  bounds in force and are editable only in custom mode, so a filter cannot
+  disagree with the header quietly.
 * **Categories** — inline rename, create, delete disabled with an explanation
   while in use.
 * **Alerts** — toast for a newly crossed threshold, panel for the month's ledger,
@@ -501,7 +516,11 @@ radii, shadows).
   *No budget for … yet*, *No alerts for this month*. Hover, `:focus`,
   `:focus-visible` and `:active` are styled (15 hover and 12 focus rules in the
   built sheet); the app is keyboard navigable and uses ARIA labels on icon-only
-  buttons. The production bundle contains no inline `style` attributes — width
+  buttons. Section tabs activate on click, `Enter` and `Space` — `Enter` has an
+  explicit handler because a real browser gives a native button a click on Space
+  but not once its role says `tab`, which left the sections reachable by Tab and
+  then stuck. Moving *between* tabs with the arrow keys is not implemented, so the
+  tablist is not a full ARIA widget; every tab stays in the tab order. The production bundle contains no inline `style` attributes — width
   steps, tones and progress bars are all classes.
 * Currency is explicit and single: **USD**, labelled in the amount inputs and
   every figure. Amounts are integer cents server-side, so no float drift.

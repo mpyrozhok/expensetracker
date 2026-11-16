@@ -1,4 +1,4 @@
-import type { Period } from './types.js';
+import type { Period, TransactionQuery } from './types.js';
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
 const monthNames = [
@@ -27,7 +27,7 @@ export function formatMonth(period: Period): string {
   return `${name} ${String(period.year)}`;
 }
 
-export function formatDay(isoDate: string): string {
+function formatIso(isoDate: string, options: Intl.DateTimeFormatOptions): string {
   const parts = isoDate.split('-');
   const year = Number(parts[0]);
   const month = Number(parts[1]);
@@ -35,10 +35,25 @@ export function formatDay(isoDate: string): string {
   if (![year, month, day].every(Number.isFinite)) return isoDate;
   return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString('en-US', {
     timeZone: 'UTC',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
+    ...options,
   });
+}
+
+export function formatDay(isoDate: string): string {
+  return formatIso(isoDate, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
+ * A range phrased once — "Mar 5 – Mar 10, 2026" — with the year twice only when
+ * the range really does cross a year. Two full dates side by side read like two
+ * unrelated dates.
+ */
+export function formatDateRange(from: string, to: string): string {
+  if (from === to) return formatDay(from);
+  if (from.slice(0, 4) === to.slice(0, 4)) {
+    return `${formatIso(from, { month: 'short', day: 'numeric' })} – ${formatDay(to)}`;
+  }
+  return `${formatDay(from)} – ${formatDay(to)}`;
 }
 
 export function todayIso(now = new Date()): string {
@@ -57,6 +72,10 @@ export function shiftPeriod(period: Period, months: number): Period {
   return { year: Math.floor(zeroBased / 12), month: (zeroBased % 12) + 1 };
 }
 
+export function samePeriod(a: Period, b: Period): boolean {
+  return a.year === b.year && a.month === b.month;
+}
+
 export function periodLabel(period: Period, now = new Date()): string {
   const label = formatMonth(period);
   const today = currentPeriod(now);
@@ -72,6 +91,22 @@ export function periodBounds(period: Period): { from: string; to: string } {
     from: `${String(period.year)}-${month}-01`,
     to: `${String(period.year)}-${month}-${String(lastDay).padStart(2, '0')}`,
   };
+}
+
+/**
+ * The inclusive dates a list should ask for, given how its range was chosen.
+ *
+ * Exported because the request and the label describing it must agree: this is
+ * the only place that knows whether the selected month or a typed From/To wins,
+ * so a screen cannot print a range it did not fetch.
+ */
+export function resolveDateRange(
+  period: Period,
+  range: Pick<TransactionQuery, 'range' | 'from' | 'to'>,
+): { from: string; to: string } {
+  const bounds = periodBounds(period);
+  if (range.range !== 'custom') return bounds;
+  return { from: range.from ?? bounds.from, to: range.to ?? bounds.to };
 }
 
 export function initials(name: string): string {

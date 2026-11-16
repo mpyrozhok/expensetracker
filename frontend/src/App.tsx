@@ -219,6 +219,7 @@ function Workspace(props: { user: ApiUser; onSignedOut: () => void }): React.JSX
             error={data.transactionsError}
             onRetry={data.refreshAll}
             onQueryChange={data.setQuery}
+            onPeriodChange={setPeriod}
             onPageChange={data.setPage}
             onEdit={(transaction) => {
               setEditing(transaction);
@@ -310,6 +311,15 @@ function TabButton(props: {
       aria-selected={props.active === props.id}
       aria-controls={`panel-${props.id}`}
       onClick={() => props.onSelect(props.id)}
+      onKeyDown={(event) => {
+        // Observed in Chromium: Space on a focused tab produces a click, Enter
+        // does not, because overriding the role of a native button to "tab"
+        // takes away its Enter activation. Left alone, the sections are
+        // unreachable with the key most people press first.
+        if (event.key !== 'Enter' || props.active === props.id) return;
+        event.preventDefault();
+        props.onSelect(props.id);
+      }}
     >
       {props.label}
       {props.badge > 0 ? <span className="badge badge--danger">{String(props.badge)}</span> : null}

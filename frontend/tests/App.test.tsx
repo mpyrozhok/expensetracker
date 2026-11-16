@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from '../src/App.js';
-import { currentPeriod, formatMonth, shiftPeriod } from '../src/lib/format.js';
+import { currentPeriod, formatMonth, periodBounds, shiftPeriod } from '../src/lib/format.js';
 import type { ApiAlert, ApiSummary } from '../src/lib/types.js';
 import { alert as alertFixture, category, emptyPage, summary as summaryFixture, transaction, user } from './fixtures.js';
 import { FakeSocket, installFetch, installWebSocket, jsonResponse } from './support.js';
@@ -288,6 +288,56 @@ describe('App', () => {
     );
     expect(listCall?.query).toContain('limit=10');
     expect(listCall?.query).toContain('offset=0');
+  });
+
+  it('puts a chosen preset back on the selected month, list and budget alike', async () => {
+    const harness = await renderSignedIn();
+    const params = (call: undefined | { query: string }): URLSearchParams => new URLSearchParams(call?.query ?? '');
+    const lastList = (): undefined | { query: string } => {
+      const lists = harness.calls.filter((call) => call.method === 'GET' && call.path === '/api/transactions');
+      return lists[lists.length - 1];
+    };
+
+    await userEvent.click(screen.getByRole('tab', { name: /transactions/i }));
+    await waitFor(() => expect(lastList()).toBeDefined());
+
+    // A custom range belongs to the list alone. The budget and the alerts keep
+    // following the selected month, which is what the header shows.
+    const today = currentPeriod();
+    const typedFrom = `${String(today.year)}-${String(today.month).padStart(2, '0')}-05`;
+    await userEvent.click(screen.getByRole('button', { name: /custom/i }));
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: typedFrom } });
+
+    await waitFor(() => expect(params(lastList()).get('from')).toBe(typedFrom));
+    const summaryCall = harness.calls.filter((call) => call.path === '/api/budgets/summary').pop();
+    expect(params(summaryCall).get('year')).toBe(String(today.year));
+    expect(params(summaryCall).get('month')).toBe(String(today.month));
+
+    // Choosing "Last month" is a month change rather than a second range: the
+    // header moves, and the list drops the bounds it had been typing.
+    await userEvent.click(screen.getByRole('button', { name: /last month/i }));
+    const lastMonth = shiftPeriod(today, -1);
+
+    expect(await screen.findByText(formatMonth(lastMonth))).toBeInTheDocument();
+    await waitFor(() => expect(params(lastList()).get('from')).toBe(periodBounds(lastMonth).from));
+    expect(params(lastList()).get('to')).toBe(periodBounds(lastMonth).to);
+  });
+
+  it('activates a section tab with Enter, not only with Space', async () => {
+    await renderSignedIn();
+
+    const transactionsTab = screen.getByRole('tab', { name: /transactions/i });
+    transactionsTab.focus();
+
+    // A real browser gives a native button a click on Space but not on Enter once
+    // its role says "tab", so this cannot be left to the platform: without the
+    // handler the keyboard reaches the tab and then stops.
+    fireEvent.keyDown(transactionsTab, { key: 'Enter' });
+
+    expect(transactionsTab).toHaveAttribute('aria-selected', 'true');
+    // The panel really switched: its filter form is the thing that only exists
+    // on the transactions screen.
+    expect(screen.getByLabelText('From')).toBeInTheDocument();
   });
 
   it('saves a budget from the dashboard and refreshes the numbers', async () => {

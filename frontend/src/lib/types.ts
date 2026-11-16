@@ -29,9 +29,22 @@ export interface TransactionDraft {
   notes: string;
 }
 
+/**
+ * Which dates the list shows, and therefore who owns the From/To fields.
+ *
+ * `period` follows the selected month, so the overview and the list cannot
+ * disagree. `custom` is an explicit range typed below. The brief asks for this
+ * month / last month / custom range as three choices: the first two are
+ * shortcuts that move the selected month and land back on `period`, which is
+ * what stops "this month" from meaning "whatever month happens to be selected"
+ * — the button that used to mean that was labelled "This month".
+ */
+export type DateRangeMode = 'period' | 'custom';
+
 export interface TransactionQuery {
   q: string;
   category_ids: number[];
+  range: DateRangeMode;
   from: string | null;
   to: string | null;
   min: string;
@@ -39,11 +52,10 @@ export interface TransactionQuery {
   sort: string;
 }
 
-export type DateRangePreset = 'all' | 'this_month' | 'last_month' | 'custom';
-
 export const EMPTY_QUERY: TransactionQuery = {
   q: '',
   category_ids: [],
+  range: 'period',
   from: null,
   to: null,
   min: '',

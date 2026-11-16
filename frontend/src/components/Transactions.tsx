@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { formatMoney, formatDay, periodBounds } from '../lib/format.js';
+import { currentPeriod, formatDateRange, formatMoney, formatDay, formatMonth, periodBounds, resolveDateRange, samePeriod, shiftPeriod } from '../lib/format.js';
 import type { ApiCategory, ApiTransaction, Period, TransactionQuery } from '../lib/types.js';
 import { EMPTY_QUERY } from '../lib/types.js';
 import { EmptyState, ErrorBanner, LoadingBlock } from './ui.js';
@@ -25,6 +25,7 @@ interface TransactionsProps {
   error: string | null;
   onRetry: () => void;
   onQueryChange: (query: TransactionQuery) => void;
+  onPeriodChange: (period: Period) => void;
   onPageChange: (page: number) => void;
   onEdit: (transaction: ApiTransaction) => void;
   onDelete: (transaction: ApiTransaction) => void;
@@ -38,11 +39,7 @@ export function Transactions(props: TransactionsProps): React.JSX.Element {
     <section className="card" aria-labelledby="transactions-heading">
       <div className="card__head">
         <h2 id="transactions-heading">Transactions</h2>
-        <span className="card__subtitle">
-          {props.transactions.length === 0
-            ? 'Nothing recorded yet'
-            : `${String(props.filteredTotal)} matching · ${formatMoney(props.filteredAmount)} in view`}
-        </span>
+        <span className="card__subtitle">{summaryLine(props)}</span>
         <span className="spacer" />
         <button type="button" className="btn btn--sm" onClick={props.onCreate}>
           Add transaction
@@ -55,6 +52,7 @@ export function Transactions(props: TransactionsProps): React.JSX.Element {
         query={props.query}
         filtersActive={filtersActive}
         onQueryChange={props.onQueryChange}
+        onPeriodChange={props.onPeriodChange}
       />
 
       {props.error ? <ErrorBanner message={props.error} onRetry={props.onRetry} /> : null}
@@ -205,11 +203,26 @@ function countActiveFilters(query: TransactionQuery): number {
   let active = 0;
   if (query.q !== '') active += 1;
   if (query.category_ids.length > 0) active += 1;
-  if (query.from !== null || query.to !== null) active += 1;
+  // The range counts as a filter only when it has left the selected month.
+  if (query.range === 'custom') active += 1;
   if (query.min !== '') active += 1;
   if (query.max !== '') active += 1;
   if (query.sort !== EMPTY_QUERY.sort) active += 1;
   return active;
+}
+
+/**
+ * Totals for what is on screen, and the dates they cover when those dates are
+ * not simply the selected month. Naming the range is the point: it is the one
+ * place the UI can admit that the list and the overview are looking at
+ * different periods, which is only possible in custom mode.
+ */
+function summaryLine(props: TransactionsProps): string {
+  if (props.transactions.length === 0) return 'Nothing recorded yet';
+  const totals = `${String(props.filteredTotal)} matching · ${formatMoney(props.filteredAmount)} in view`;
+  if (props.query.range !== 'custom') return totals;
+  const range = resolveDateRange(props.period, props.query);
+  return `${totals} · ${formatDateRange(range.from, range.to)}`;
 }
 
 interface FilterBarProps {
@@ -218,6 +231,7 @@ interface FilterBarProps {
   query: TransactionQuery;
   filtersActive: number;
   onQueryChange: (query: TransactionQuery) => void;
+  onPeriodChange: (period: Period) => void;
 }
 
 function FilterBar(props: FilterBarProps): React.JSX.Element {
@@ -233,9 +247,11 @@ function FilterBar(props: FilterBarProps): React.JSX.Element {
   }, [props.query.q, props.query.min, props.query.max]);
 
   const bounds = periodBounds(props.period);
+  const followingMonth = props.query.range === 'period';
+  const today = currentPeriod();
+  const lastMonth = shiftPeriod(today, -1);
   const customFrom = props.query.from ?? bounds.from;
   const customTo = props.query.to ?? bounds.to;
-  const datesOverridden = props.query.from !== null || props.query.to !== null;
 
   const toggleCategory = (id: number): void => {
     const next = props.query.category_ids.includes(id)
@@ -243,6 +259,42 @@ function FilterBar(props: FilterBarProps): React.JSX.Element {
       : [...props.query.category_ids, id];
     props.onQueryChange({ ...props.query, category_ids: next });
   };
+
+  /**
+   * "This month" and "Last month" are shortcuts to a month, not a second range
+   * concept: they move the selected month and hand the dates back to it, so the
+   * list follows the header the way it already does whenever the month changes.
+   * The button that used to stand here said "This month" while meaning "the
+   * selected month", and it was the only way out of a typed range.
+   */
+  const selectMonth = (period: Period): void => {
+    props.onPeriodChange(period);
+    props.onQueryChange({ ...props.query, range: 'period', from: null, to: null });
+  };
+
+  const rangePresets: Array<{ label: string; pressed: boolean; select: () => void }> = [
+    {
+      label: 'This month',
+      pressed: followingMonth && samePeriod(props.period, today),
+      select: () => selectMonth(today),
+    },
+    {
+      label: 'Last month',
+      pressed: followingMonth && samePeriod(props.period, lastMonth),
+      select: () => selectMonth(lastMonth),
+    },
+    {
+      label: 'Custom…',
+      pressed: !followingMonth,
+      select: () =>
+        props.onQueryChange({
+          ...props.query,
+          range: 'custom',
+          from: props.query.from ?? bounds.from,
+          to: props.query.to ?? bounds.to,
+        }),
+    },
+  ];
 
   return (
     <form
@@ -252,6 +304,25 @@ function FilterBar(props: FilterBarProps): React.JSX.Element {
         props.onQueryChange({ ...props.query, q: search.trim(), min: min.trim(), max: max.trim() });
       }}
     >
+      <div className="chip-row" role="group" aria-label="Date range">
+        {rangePresets.map((preset) => (
+          <button
+            key={preset.label}
+            type="button"
+            className="chip"
+            aria-pressed={preset.pressed}
+            onClick={preset.select}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+      <p className="field__hint">
+        {followingMonth
+          ? `Dates follow ${formatMonth(props.period)}. Choose Custom… to pick your own.`
+          : 'Custom dates. The selected month still drives the budget and alerts.'}
+      </p>
+
       <div className="filters">
         <div className="field">
           <label className="field__label" htmlFor="filter-search">
@@ -275,6 +346,7 @@ function FilterBar(props: FilterBarProps): React.JSX.Element {
             className="input"
             type="date"
             value={customFrom}
+            disabled={followingMonth}
             onChange={(event) => props.onQueryChange({ ...props.query, from: event.target.value })}
           />
         </div>
@@ -287,6 +359,7 @@ function FilterBar(props: FilterBarProps): React.JSX.Element {
             className="input"
             type="date"
             value={customTo}
+            disabled={followingMonth}
             onChange={(event) => props.onQueryChange({ ...props.query, to: event.target.value })}
           />
         </div>
@@ -358,15 +431,6 @@ function FilterBar(props: FilterBarProps): React.JSX.Element {
         <button type="submit" className="btn btn--secondary btn--sm">
           Apply filters
         </button>
-        {datesOverridden ? (
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm"
-            onClick={() => props.onQueryChange({ ...props.query, from: null, to: null })}
-          >
-            This month
-          </button>
-        ) : null}
         {props.filtersActive > 0 ? (
           <button type="button" className="btn btn--ghost btn--sm" onClick={() => props.onQueryChange(EMPTY_QUERY)}>
             Clear all filters
