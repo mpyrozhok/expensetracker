@@ -1,0 +1,17 @@
+node_modules
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+data
+**/*.db
+**/*.db-wal
+**/*.db-shm
+.git
+.gitignore
+README.md
+task.txt
+scripts
+docker
+frontend/test-results
+**/coverage
+.npmcache

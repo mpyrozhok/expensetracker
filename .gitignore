@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+.npmcache/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Local database (SQLite + WAL sidecars)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Local environment: keep the example, never the real thing
+.env
+.env.local
+docker/.env
+backend/.env
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Test + tool caches
+coverage/
+test-results/
+.vitest/
+*.log

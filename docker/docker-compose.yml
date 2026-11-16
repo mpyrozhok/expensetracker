@@ -1,0 +1,62 @@
+# Local containerized run:
+#
+#   cd docker
+#   SESSION_SECRET=$(openssl rand -hex 32) docker compose up --build
+#   open http://localhost:8787
+#
+# The app is single-origin: Express serves the API, the WebSocket upgrade on
+# /ws and the compiled SPA, so no reverse proxy or CORS setup is needed.
+#
+# Real SSO: put GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (and/or the
+# GitHub pair) in a docker/.env file beside this compose file, one per
+# line, unquoted, and stop setting ALLOW_MOCK_AUTH.
+#
+# Without credentials, set ALLOW_MOCK_AUTH=1 and use the "SSO stub" form
+# on the sign-in screen: same provisioning path, no network call.
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: expense-tracker:local
+    restart: unless-stopped
+    ports:
+      - '${PORT:-8787}:8787'
+    environment:
+      # Required. Generate with: openssl rand -hex 32
+      SESSION_SECRET: '${SESSION_SECRET:?required}'
+      # Must match the browser origin: the post-login redirect is
+      # allow-listed against this value.
+      FRONTEND_ORIGIN: '${FRONTEND_ORIGIN:-http://localhost:8787}'
+      DATABASE_PATH: /data/app.db
+      ALLOW_MOCK_AUTH: '${ALLOW_MOCK_AUTH:-0}'
+      # SSO credentials; see the README for how to obtain them.
+      GOOGLE_CLIENT_ID: '${GOOGLE_CLIENT_ID:-}'
+      GOOGLE_CLIENT_SECRET: '${GOOGLE_CLIENT_SECRET:-}'
+      GITHUB_CLIENT_ID: '${GITHUB_CLIENT_ID:-}'
+      GITHUB_CLIENT_SECRET: '${GITHUB_CLIENT_SECRET:-}'
+      # Redirect URIs default to this exact shape, which is what the
+      # port mapping above exposes:
+      #   http://localhost:${PORT}/api/auth/<provider>/callback
+      # Override with GOOGLE_REDIRECT_URI / GITHUB_REDIRECT_URI when
+      # the container is reached through another host name.
+    volumes:
+      # SQLite runs in WAL mode, so the directory itself is the state.
+      - expense-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:8787/api/health')
+            .then(r=>process.exit(r.ok?0:1))
+            .catch(()=>process.exit(1))
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  expense-data:
