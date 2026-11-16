@@ -21,8 +21,11 @@ import {
   ApiError,
   badRequest,
   notFound,
+  optDate,
   optEnum,
   optNumber,
+  parseLimit,
+  parseOffset,
   reqAmountCents,
   reqCurrency,
   reqId,
@@ -240,13 +243,13 @@ export function buildRouter(ctx: AppContext): Router {
     wrap((req, res) => {
       const user = requireUser(req);
       const q = asQuery(req);
-      const limit = Math.min(Math.max(Number(q.limit ?? 200) || 200, 1), 500);
-      const offset = Math.max(Number(q.offset ?? 0) || 0, 0);
+      const limit = parseLimit(q.limit);
+      const offset = parseOffset(q.offset);
       const result = ctx.transactions.list(user.id, {
         q: String(q.q ?? '').trim(),
         categoryIds: parseCategoryIds(q.category_ids),
-        from: normalized(q.from),
-        to: normalized(q.to),
+        from: optDate(q.from, 'from'),
+        to: optDate(q.to, 'to'),
         minCents: toCents(optNumber(q.min, 'min'), 'min'),
         maxCents: toCents(optNumber(q.max, 'max'), 'max'),
         sort: optEnum(q.sort, SORT_KEYS, 'sort') ?? DEFAULT_SORT,
@@ -400,11 +403,6 @@ function notifyBudget(ctx: AppContext, userId: number, period: Period): void {
 function periodOfDay(date: string): Period {
   const parts = String(date).split('-');
   return { year: Number(parts[0]), month: Number(parts[1]) };
-}
-
-function normalized(value: string | undefined): string | null {
-  const text = String(value ?? '').trim();
-  return text === '' ? null : text;
 }
 
 function toCents(value: number | undefined, field: string): number | null {

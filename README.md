@@ -298,9 +298,17 @@ safe (401 when a session is required); writes need the CSRF header.
 `GET /api/transactions` accepts `q` (title and notes, case-insensitive),
 `category_ids` (comma-separated), `from` / `to` (`YYYY-MM-DD`), `min` / `max`
 (decimal amount), `sort` = `date_desc` (default) `| date_asc | amount_desc |
-amount_asc`, `limit` (default 200, max 500) and `offset`. The response carries
-the page plus aggregate context, so the footer and the category chips agree with
-the filters rather than with the visible page:
+amount_asc`, `limit` (default 200, max 500) and `offset`. A filter that quietly
+matched nothing, or everything, is indistinguishable from one that worked, so
+each of these is refused with a `400` instead: a bad `sort`, `category_ids`,
+`min`/`max`, `limit` or `offset`, and a `from`/`to` that is not a real calendar
+date — which includes a `YYYY-MM-31` month-end sentinel, since that used to work
+by accident while dates compared as strings. `limit` and `offset` must be whole
+numbers; a finite `limit` above the cap means "the largest page you will give
+me" and is clamped, while `limit=1e400` is refused, because it parses to
+Infinity and used to reach SQLite as a bind value and answer `500`. The response
+carries the page plus aggregate context, so the footer and the category chips
+agree with the filters rather than with the visible page:
 
 ```json
 { "items": [...], "total": 42, "total_amount": 1234.5,
@@ -315,6 +323,9 @@ decimals, be greater than 0 and at most 100000000; title is required and at most
 200 characters; date must be a real `YYYY-MM-DD` between 1900 and 2200; notes at
 most 2000 characters; category name required, at most 60, unique per user
 case-insensitively; currency must be `USD`. Amounts are stored as integer cents.
+A JSON body over 100kb gets `413 payload_too_large` and a body that is not JSON
+at all gets `400 invalid_json`; those are deliberately different answers, because
+the first client needs to send less and the second needs to send differently.
 
 ---
 

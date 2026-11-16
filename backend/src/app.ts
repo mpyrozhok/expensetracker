@@ -18,12 +18,14 @@ export interface CreateAppOptions {
   fetchImpl?: FetchLike;
 }
 
-export interface CreatedApp {
-  app: Express;
+export interface CreatedApp {  app: Express;
   ctx: AppContext;
   /** Releases the SQLite handle; call after closing the HTTP server. */
   close: () => void;
 }
+
+/** Largest JSON body the API accepts; also the wording of the 413 message. */
+const MAX_REQUEST_BODY = '100kb';
 
 export function createApp(options: CreateAppOptions = {}): CreatedApp {
   const cfg = loadConfig(options.config ?? {});
@@ -33,7 +35,7 @@ export function createApp(options: CreateAppOptions = {}): CreatedApp {
 
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '100kb' }));
+  app.use(express.json({ limit: MAX_REQUEST_BODY }));
   app.use(securityHeaders);
   app.use(loadUser(cfg, ctx.users));
   app.use('/api', csrfGuard);
@@ -101,6 +103,13 @@ function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunc
     code: String((err as Partial<ErrorShape>)?.code ?? ''),
     statusCode: Number((err as Partial<ErrorShape>)?.statusCode ?? 0),
   };
+  if (isPayloadTooLarge(shape)) {
+    // Distinct from a malformed body: this client sent fine JSON and needs to
+    // hear "smaller", not "fix your syntax".
+    body.error = { code: 'payload_too_large', message: `Request body must be under ${MAX_REQUEST_BODY}` };
+    res.status(413).json(body);
+    return;
+  }
   if (isBodyParseError(shape)) {
     body.error = { code: 'invalid_json', message: 'Request body must be valid JSON' };
     res.status(400).json(body);
@@ -116,8 +125,12 @@ function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunc
   res.status(500).json(body);
 }
 
+function isPayloadTooLarge(err: ErrorShape): boolean {
+  return err.type === 'entity.too.large';
+}
+
 function isBodyParseError(err: ErrorShape): boolean {
-  return err.type === 'entity.parse.failed' || err.type === 'entity.too.large';
+  return err.type === 'entity.parse.failed';
 }
 
 function isNotFoundError(err: ErrorShape): boolean {

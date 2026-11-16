@@ -157,3 +157,42 @@ export function optEnum<T extends string>(
   if (!hit) throw badRequest('field_invalid', `${field} must be one of: ${allowed.join(', ')}`);
   return hit;
 }
+
+/** Optional `from`/`to` bound: absent or empty means unbounded, anything else
+ * has to be a real calendar date. A filter that silently matches nothing (or
+ * everything) is the worst possible answer, because it is indistinguishable from
+ * a working filter. */
+export function optDate(value: string | undefined, field: string): string | null {
+  const text = String(value ?? '').trim();
+  return text === '' ? null : reqDate(text, field);
+}
+
+/** Page size for list endpoints, and the largest page one request may ask for. */
+export const PAGE_SIZE_DEFAULT = 200;
+export const PAGE_SIZE_MAX = 500;
+
+function parseBound(raw: string | undefined, field: string, fallback: number, minimum: number): number {
+  const text = String(raw ?? '').trim();
+  if (text === '') return fallback;
+  const n = Number(text);
+  // Number.isInteger is false for Infinity, which is the value `1e400` parses
+  // to. Letting that through reaches SQLite as a bind value and surfaces as a
+  // 500 from the query layer.
+  if (Number.isInteger(n) && n >= minimum) return n;
+  throw badRequest(`${field}_invalid`, `${field} must be a whole number >= ${minimum}`);
+}
+
+/**
+ * Pagination bounds. A value that cannot be honoured is a 400 rather than a
+ * quiet default, but asking for more than the cap is not an error: that is a
+ * client asking for everything it can get, and the truthful answer is the
+ * largest page there is.
+ */
+export function parseLimit(raw: string | undefined): number {
+  return Math.min(parseBound(raw, 'limit', PAGE_SIZE_DEFAULT, 1), PAGE_SIZE_MAX);
+}
+
+export function parseOffset(raw: string | undefined): number {
+  return parseBound(raw, 'offset', 0, 0);
+}
+

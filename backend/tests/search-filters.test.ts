@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ApiError, PAGE_SIZE_DEFAULT, PAGE_SIZE_MAX, parseLimit, parseOffset } from '../src/validation.js';
 import { dayInCurrentMonth, isoDate, testEnv, type TestApp } from './helpers.js';
 
 interface Fixture {
@@ -82,8 +83,18 @@ describe('search and filters', () => {
     const stamp = dayInCurrentMonth(1);
     const year = stamp.slice(0, 4);
     const month = stamp.slice(5, 7);
-    const thisMonth = await app.api.get(`/api/transactions?from=${year}-${month}-01&to=${year}-${month}-31`).expect(200);
+    // The bound has to be a date that exists: `YYYY-MM-31` used to be accepted
+    // and worked by accident, because dates compare as strings. Day 31 in a
+    // 30-day month is now refused the same way it is for a transaction date.
+    const lastDay = new Date(Number(year), Number(month), 0).getDate();
+    const thisMonth = await app.api
+      .get(`/api/transactions?from=${year}-${month}-01&to=${year}-${month}-${String(lastDay).padStart(2, '0')}`)
+      .expect(200);
     expect(titles(thisMonth).sort()).toEqual(['Coffee beans', 'Flight to Lisbon']);
+
+    const sentinel = await app.api.get(`/api/transactions?to=${year}-${month}-31`);
+    expect(sentinel.status).toBe(400);
+    expect(sentinel.body.error.code).toBe('date_invalid');
     app.close();
   });
 
@@ -130,5 +141,90 @@ describe('search and filters', () => {
     const badMin = await app.api.get('/api/transactions?min=abc');
     expect(badMin.status).toBe(400);
     app.close();
+  });
+});
+
+describe('list query contract', () => {
+  it('refuses a non-date from or to instead of guessing', async () => {
+    const { app } = await seed();
+    // Both used to be accepted: a bad `from` matched nothing (an empty list that
+    // looks like a real answer) and a bad `to` was dropped (a full list that
+    // looks like the filter worked). Neither is a truthful response.
+    const badFrom = await app.api.get('/api/transactions?from=garbage');
+    expect(badFrom.status).toBe(400);
+    expect(badFrom.body.error.code).toBe('date_invalid');
+
+    const badTo = await app.api.get('/api/transactions?to=not-a-date');
+    expect(badTo.status).toBe(400);
+    expect(badTo.body.error.code).toBe('date_invalid');
+
+    const emptyBound = await app.api.get('/api/transactions?from=&to=');
+    expect(emptyBound.status).toBe(200);
+    expect(emptyBound.body.total).toBe(5);
+    app.close();
+  });
+
+  it('still treats a reversed date range as a real question', async () => {
+    const { app } = await seed();
+    const res = await app.api.get(`/api/transactions?from=${isoDate(-1)}&to=${isoDate(-60)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(0);
+    app.close();
+  });
+
+  it('refuses nonsense pagination rather than coercing it', async () => {
+    const { app } = await seed();
+    // `offset=1e400` parses to Infinity, reached SQLite as a bind value, and
+    // surfaced as a 500 from the query layer.
+    const infinity = await app.api.get('/api/transactions?offset=1e400');
+    expect(infinity.status).toBe(400);
+    expect(infinity.body.error.code).toBe('offset_invalid');
+
+    for (const q of ['limit=abc', 'limit=0', 'limit=-5', 'limit=12.5', 'offset=-1', 'offset=1.5']) {
+      const res = await app.api.get(`/api/transactions?${q}`);
+      expect(res.status, q).toBe(400);
+      expect(res.body.error.code, q).toBe(q.startsWith('limit') ? 'limit_invalid' : 'offset_invalid');
+    }
+
+    const stillPaging = await app.api.get('/api/transactions?sort=amount_asc&limit=2&offset=2').expect(200);
+    expect(titles(stillPaging)).toEqual(['Taxi to airport', 'Supermarket']);
+    app.close();
+  });
+});
+
+describe('pagination parser', () => {
+  const codeOf = (run: () => unknown): string => {
+    try {
+      run();
+      return 'did not throw';
+    } catch (err) {
+      return err instanceof ApiError ? err.code : `not an ApiError: ${String(err)}`;
+    }
+  };
+
+  it('defaults and clamps above the cap', () => {
+    expect(parseLimit(undefined)).toBe(PAGE_SIZE_DEFAULT);
+    expect(parseLimit('')).toBe(PAGE_SIZE_DEFAULT);
+    expect(parseLimit(' 20 ')).toBe(20);
+    expect(parseLimit('500')).toBe(PAGE_SIZE_MAX);
+    // A finite ask above the cap is a polite "as much as you will give me".
+    expect(parseLimit('501')).toBe(PAGE_SIZE_MAX);
+    expect(parseLimit('100000')).toBe(PAGE_SIZE_MAX);
+    expect(parseOffset(undefined)).toBe(0);
+    expect(parseOffset('2')).toBe(2);
+    expect(parseOffset('2.0')).toBe(2);
+  });
+
+  it('rejects what it cannot honestly page with', () => {
+    expect(codeOf(() => parseLimit('0'))).toBe('limit_invalid');
+    expect(codeOf(() => parseLimit('-5'))).toBe('limit_invalid');
+    expect(codeOf(() => parseLimit('12.5'))).toBe('limit_invalid');
+    expect(codeOf(() => parseLimit('abc'))).toBe('limit_invalid');
+    // Non-finite is the case that used to reach SQLite as Infinity.
+    expect(codeOf(() => parseLimit('1e400'))).toBe('limit_invalid');
+    expect(codeOf(() => parseOffset('-1'))).toBe('offset_invalid');
+    expect(codeOf(() => parseOffset('1e400'))).toBe('offset_invalid');
+    expect(codeOf(() => parseOffset('abc'))).toBe('offset_invalid');
+    expect(codeOf(() => parseOffset('1.5'))).toBe('offset_invalid');
   });
 });
