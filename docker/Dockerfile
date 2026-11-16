@@ -4,15 +4,22 @@
 # container exposes one origin for the REST API, the WebSocket upgrade and the
 # static bundle. That removes CORS and the reverse proxy from the local setup.
 #
-#   docker build -f docker/Dockerfile -t expense-tracker .
+#   docker buildx build --load -f docker/Dockerfile -t expense-tracker .
 #   docker run --rm -p 8787:8787 -v expense-data:/data expense-tracker
+#
+# The --load flag is not decoration: when the active buildx builder is driven by
+# docker-container (the default on the machine this was verified on), a plain
+# `docker build` completes with exit status 0 and imports nothing, so the image
+# simply is not there afterwards. `docker buildx ls` shows the driver.
 
 # ------------------------------------------------------------------ build stage
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 
-# better-sqlite3 ships prebuilt binaries for Node LTS; the toolchain is only used
-# when this platform has to fall back to a source build.
+# better-sqlite3 is a native module. It ships prebuilds for Node LTS on common
+# platforms, but there was none for this base image, so the build compiled it from
+# source - which is what python3/make/g++ below are for, and why they are not
+# dropped from the build stage.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ \
  && rm -rf /var/lib/apt/lists/*
@@ -24,11 +31,15 @@ COPY frontend/package.json ./frontend/
 RUN npm ci --cache /tmp/npmcache
 
 # The frontend imports the API types from the backend with type-only imports, so
-# both trees have to be present for the build.
-COPY tsconfig.json vitest.workspace.ts ./
+# both trees have to be present for the build. Each workspace carries its own
+# tsconfig.json; node_modules and dist are excluded by .dockerignore, so the
+# TypeScript build and the native better-sqlite3 module are both made here.
 COPY backend ./backend
 COPY frontend ./frontend
 
+# Build both workspaces, then drop dev dependencies in place: the prune removes
+# them from the same tree the runtime stage copies, so the native module the build
+# produced is carried across rather than being rebuilt with no compiler present.
 RUN npm run build \
  && npm prune --omit=dev
 

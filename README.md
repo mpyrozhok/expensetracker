@@ -14,7 +14,7 @@ stub, which drives the same code path.
 | Stack | TypeScript, Node >= 20, Express 4, SQLite (`better-sqlite3`), `ws`, React 18, Vite 5, plain CSS |
 | Tests | `npm test` → **183 tests** (60 backend, 123 frontend), `npm run smoke` → **42 live checks** |
 | Network in tests | none — SSO providers, tokens and userinfo are stubbed by injected `fetch` |
-| Containers | `docker/Dockerfile` + `docker/docker-compose.yml` (build not runnable on this machine, see [Docker](#docker)) |
+| Containers | `docker/Dockerfile` + `docker/docker-compose.yml`; the image builds and the 42 smoke checks pass against the running container ([Docker](#docker)) |
 
 ---
 
@@ -470,32 +470,56 @@ radii, shadows).
 
 ## Docker
 
-Provided as an optional deliverable:
+Provided as an optional deliverable, **built and run on this machine**:
 
-* `docker/Dockerfile` — multi-stage (build with toolchain, then a slim Node 22
-  runtime as `node`), non-root, `HEALTHCHECK` on `/api/health`, SQLite on a
-  `/data` volume, single origin for API + WS + SPA.
+* `docker/Dockerfile` — multi-stage (build stage with the native-module
+  toolchain, then a slim Node 22 runtime running as `node`), `HEALTHCHECK` on
+  `/api/health`, SQLite on a `/data` volume, one origin for API + WS + SPA.
 * `docker/docker-compose.yml` — one service, port mapping, named volume, env
   passthrough for the SSO credentials.
 
 ```bash
+# build (see the --load note below) and run without compose
+docker buildx build --load -f docker/Dockerfile -t expense-tracker:local .
+docker run --rm -p 8787:8787 -e SESSION_SECRET=$(openssl rand -hex 32) \
+  -e ALLOW_MOCK_AUTH=1 -v expense-data:/data expense-tracker:local
+
+# or via compose
 cd docker && SESSION_SECRET=$(openssl rand -hex 32) docker compose up --build
 ```
 
-> **Not verified by an actual build on this machine.** The Docker daemon is not
-> reachable as this user — `/var/run/docker.sock` answers
-> `permission denied … connect`, the account is not in the `docker` group, and
-> `sudo` is not available non-interactively. The Compose CLI plugin is also not
-> installed here, so `docker compose config` cannot validate it either. What I
-> *did* verify instead: the compose file parses and its shape is as intended;
-> the container's exact `CMD` and environment were run directly
-> (`NODE_ENV=production … node backend/dist/index.js`), which serves the SPA
-> document, hashed assets with correct content types, the client-route fallback
-> and the WebSocket upgrade on one origin, refuses to boot without
-> `SESSION_SECRET`, answers `404 mock_auth_disabled` and
-> `501 oauth_not_configured` in production; and `npm run smoke` passes against
-> that build. Treat the image build itself as unverified until it runs on a
-> machine with a reachable daemon.
+### Verified with the container running
+
+| Check | Result |
+|---|---|
+| `docker buildx build` | exit 0, image `expense-tracker:local` at 249 MB |
+| `docker run` | starts as `node`, healthcheck reports `(healthy)` |
+| `npm run smoke -- --url http://localhost:8791` | **42/42** against the container: session cookie, CSRF, category policy, budget math, 50/80/100 alerts over the WebSocket, ack, reconnect replay, search/sort/paging, per-user isolation, logout revocation |
+| `GET /` on the container | 200 `text/html`, the SPA document, with `/api/*` still answering JSON |
+| `ls /data` inside the container | `app.db`, `app.db-shm`, `app.db-wal` — WAL works on the mounted volume as the non-root user |
+| `docker restart` | the row created before it, and the session issued before it, are both still there afterwards |
+
+Building it found two real problems, both now fixed in the Dockerfile:
+
+1. **`COPY tsconfig.json …` referenced a root tsconfig that does not exist** (each
+   workspace carries its own), so the very first layer that needed sources failed.
+   An unrun Dockerfile reads fine and breaks on the first build; this one had never
+   been built.
+2. **`docker build` silently produces no image on this machine.** The active buildx
+   builder is driver `docker-container` (see `docker buildx ls`), which keeps the
+   result in the builder and exports nothing to the image store unless asked:
+   `docker build` returned 0 with every step `DONE` and `docker images` stayed
+   empty. `docker buildx build --load` is what actually lands the image — hence the
+   header comment in the Dockerfile.
+
+> **Still unverified:** `docker compose` itself — neither the v2 plugin nor the v1
+> standalone binary is installed here, so `docker compose up` and even
+> `docker compose config` cannot run. What was verified instead is the exact thing
+> the compose file describes: this image, the same environment
+> (`SESSION_SECRET`, `ALLOW_MOCK_AUTH`, `FRONTEND_ORIGIN`, `DATABASE_PATH`), the
+> same port mapping and a named volume at `/data`. The compose file's YAML was
+> checked structurally, but treat the `compose up` path as untested until it runs
+> where compose exists.
 
 ---
 
