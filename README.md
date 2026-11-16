@@ -22,10 +22,26 @@ stub, which drives the same code path.
 
 ```bash
 npm ci
-npm run dev          # backend on :8787, frontend on :5173, proxy preconfigured
+npm run dev          # API on :8787, UI on :5173 with the API proxied through it
 ```
 
 Open <http://localhost:5173>.
+
+### Which port do I open?
+
+`PORT` (8787) is always the Express **API origin**. What differs between the two
+run modes is who serves the UI:
+
+| Running | UI served by | Open |
+|---|---|---|
+| `npm run dev` | Vite dev server on `:5173`, proxying `/api` and `/ws` to `:8787` | <http://localhost:5173> |
+| `npm run build` + `npm start` with `STATIC_DIR`, or the Docker image | the same Express process as the API | <http://localhost:8787> |
+
+So `:8787` answers page requests in the built mode and returns a JSON `404`
+for them in dev mode (Vite owns the pages then) — which is why the OAuth
+redirect URIs below always point at `:8787`: the callback is handled by the
+backend in both modes. `FRONTEND_ORIGIN` is the one that changes: `:5173` in
+dev, `:8787` for the single-process build.
 
 `ALLOW_MOCK_AUTH` defaults to on outside production, so the sign-in screen shows
 a **"Stub identity"** form under the two provider buttons: type a name, press
@@ -221,7 +237,7 @@ GITHUB_REDIRECT_URI=http://localhost:8787/api/auth/github/callback
 | Variable | Default | Notes |
 |---|---|---|
 | `NODE_ENV` | `development` | `production` requires `SESSION_SECRET` and refuses to boot without it |
-| `PORT` / `HOST` | `8787` / `0.0.0.0` | |
+| `PORT` / `HOST` | `8787` / `0.0.0.0` | API origin; with `STATIC_DIR` set it also serves the SPA and `/ws` on this one port |
 | `SESSION_SECRET` | insecure dev value | `openssl rand -hex 32`; required in production |
 | `SESSION_TTL_SECONDS` | `2592000` | 30 days, so a refresh (and a restart) keeps you signed in |
 | `DATABASE_PATH` | `./data/app.db` | created automatically; `:memory:` in tests |
