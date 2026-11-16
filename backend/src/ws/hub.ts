@@ -1,8 +1,10 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage, Server } from 'node:http';
+import type { Duplex } from 'node:stream';
 import type { AppConfig } from '../config.js';
 import type { AlertService } from '../services/alerts.js';
 import type { UsersService } from '../services/users.js';
+import { originBelongsToApp } from '../middleware.js';
 import { extractSessionToken } from '../session.js';
 import {
   BUDGET_ALERT_THRESHOLDS,
@@ -42,9 +44,9 @@ interface Client {
  * `ack` marks an alert read and is confirmed with `alert-read`.
  *
  * Authorization: the upgrade request must carry the same session credential as
- * the HTTP API; unauthenticated sockets are closed with code 4401 before any
- * application frame is sent, and every socket only ever receives alerts
- * computed for its own user id.
+ * the HTTP API, and a socket that fails it is refused before any application
+ * frame is sent (see refuseUpgrade for why that is a plain HTTP status). Every
+ * socket only ever receives alerts computed for its own user id.
  */
 export class BudgetHub {
   private readonly wss: WebSocketServer;
@@ -62,13 +64,22 @@ export class BudgetHub {
   attach(server: Server): void {
     server.on('upgrade', (req, socket, head) => {
       if (requestPath(req) !== WS_PATH) return;
+      // A browser always sends Origin on a WebSocket upgrade, and it attaches the
+      // session cookie automatically - so without this check a page on another
+      // site could open a socket into a signed-in user's alerts. Non-browser
+      // clients (tests, the smoke script, CLI tools) send no Origin and stay
+      // allowed, because for them there is no cross-site model to enforce.
+      const origin = headerValue(req.headers.origin);
+      if (origin !== null && !originBelongsToApp(this.cfg, origin)) {
+        refuseUpgrade(socket, 403, 4403, 'origin_not_allowed');
+        return;
+      }
       // Same credential and the same revocation rule as the HTTP API, so a
       // socket cannot outlive the session that opened it.
       const claims = extractSessionToken(this.cfg, req);
       const user = claims === null ? null : this.users.findByClaims(claims);
       if (user === null) {
-        socket.write('HTTP/1.1 4401 Unauthorized\r\n\r\n');
-        socket.destroy();
+        refuseUpgrade(socket, 401, 4401, 'unauthorized');
         return;
       }
       this.wss.handleUpgrade(req, socket, head, (ws) => {
@@ -115,8 +126,10 @@ export class BudgetHub {
     const client: Client = { id: this.nextClientId++, socket, userId, subscription: null };
     this.clients.set(client.id, client);
 
-    send(socket, { type: 'welcome', server_time: new Date().toISOString(), user_id: userId });
-
+    // Handlers first, welcome second. `ws` emits an incoming frame to whichever
+    // listeners exist at that moment, so a client that replies the instant it
+    // sees `welcome` - which is exactly what a subscribe-on-open client does -
+    // would otherwise have that first message silently dropped.
     socket.on('message', (raw) => {
       let parsed: InboundMessage | null = null;
       try {
@@ -134,6 +147,8 @@ export class BudgetHub {
     socket.on('error', () => {
       this.clients.delete(client.id);
     });
+
+    send(socket, { type: 'welcome', server_time: new Date().toISOString(), user_id: userId });
   }
 
   private onMessage(client: Client, parsed: InboundMessage | null): void {
@@ -236,6 +251,34 @@ function requestPath(req: IncomingMessage): string {
   const raw = req.url ?? '';
   const qmark = raw.indexOf('?');
   return qmark === -1 ? raw : raw.slice(0, qmark);
+}
+
+function headerValue(raw: string | string[] | undefined): string | null {
+  if (Array.isArray(raw)) return raw[0] ?? null;
+  return typeof raw === 'string' && raw !== '' ? raw : null;
+}
+
+/**
+ * Turn an upgrade request down before a WebSocket exists.
+ *
+ * The status line has to be a real three-digit HTTP status. Writing the
+ * four-digit WebSocket close code (4401) there - which is what this used to do -
+ * produces a response no client can parse: the browser reports an opaque
+ * handshake failure, the network tab shows nothing useful, and a proxy in the
+ * middle may log a bad gateway. So the refusal is an ordinary HTTP response and
+ * the close-code equivalent rides along in a header for clients that care about
+ * the distinction between "sign in" and "that page may not connect here".
+ */
+const REFUSAL_PHRASES: Record<number, string> = { 401: 'Unauthorized', 403: 'Forbidden' };
+
+function refuseUpgrade(socket: Duplex, status: number, closeCode: number, reason: string): void {
+  socket.end(
+    `HTTP/1.1 ${status} ${REFUSAL_PHRASES[status] ?? 'Forbidden'}\r\n` +
+      `X-WebSocket-Reject: ${closeCode} ${reason}\r\n` +
+      'Content-Length: 0\r\n' +
+      'Connection: close\r\n' +
+      '\r\n',
+  );
 }
 
 /** Query-string/JSON values are coerced, never trusted, and validated by range. */

@@ -6,6 +6,7 @@ import {
   liveApp,
   sleep,
   TestSocket,
+  upgradeAttempt,
   type LiveApp,
   type TestApp,
 } from './helpers.js';
@@ -235,6 +236,50 @@ describe('budget alerts over WebSocket', () => {
     await ctx.closeLive();
   });
 
+  it('tells a second tab about an acknowledgement, so two windows agree', async () => {
+    const ctx = await setupLive();
+    const period = currentPeriod();
+    // Both windows have to be subscribed for either to be pushed to at all.
+    ctx.socket.subscribe(period);
+    await ctx.socket.waitForType('budget-alerts');
+
+    // Same user, second window, already watching the same month.
+    const other = new TestSocket(ctx.wsUrl, ctx.api.token());
+    await other.opened();
+    await other.waitForType('welcome');
+    other.subscribe(period);
+    await other.waitForType('budget-alerts');
+    const beforeAck = other.messages.length;
+
+    await ctx.api.put('/api/budgets').send({ ...period, amount: 100 }).expect(200);
+    await spend(ctx, ctx.categoryId, 50, dayInCurrentMonth(21));
+    const frame = await ctx.socket.waitFor(
+      (m) => m.type === 'budget-alerts' && newThresholds(m as AlertsFrame).length > 0,
+    );
+    const threshold = newThresholds(frame as AlertsFrame)[0]?.threshold ?? 0;
+    expect(threshold).toBe(50);
+
+    ctx.socket.send({ type: 'ack', channel: 'budget_alerts', period, threshold });
+
+    // The acking socket gets the confirmation it expects...
+    await ctx.socket.waitForType('alert-read');
+    // ...and so does the other window, which sent nothing.
+    const echoed = await other.waitForType('alert-read', 4000, beforeAck);
+    expect(echoed).toMatchObject({ channel: 'budget_alerts', period, threshold });
+
+    // Re-subscribing there replays the ledger as read, because the ack went to
+    // the database rather than to one socket's memory.
+    other.send({ type: 'unsubscribe', channel: 'budget_alerts' });
+    const mark = other.messages.length;
+    other.subscribe(period);
+    const replayed = (await other.waitForType('budget-alerts', 4000, mark)) as AlertsFrame;
+    expect(replayed.alerts.find((a) => a.threshold === 50)?.read).toBe(true);
+
+    other.close();
+    ctx.socket.close();
+    await ctx.closeLive();
+  });
+
   it('rejects unauthenticated sockets before any application frame', async () => {
     const ctx = await liveApp();
     const anonymous = new WebSocket(ctx.wsUrl);
@@ -247,6 +292,40 @@ describe('budget alerts over WebSocket', () => {
     ]);
     expect(outcome).not.toBe('open');
     anonymous.terminate();
+    await ctx.closeLive();
+  });
+
+  it('refuses an unauthenticated upgrade with a status a client can read', async () => {
+    const ctx = await liveApp();
+    // This refusal used to write a four-digit close code into the status line,
+    // which is not valid HTTP: a client could only report "something failed", and
+    // no devtools panel or proxy had anything to show. The probe rejects outright
+    // on an unparseable response, so this assertion is the regression test.
+    const refused = await upgradeAttempt(ctx.wsUrl);
+    expect(refused.code).toBe(401);
+    expect(refused.rejectHeader).toBe('4401 unauthorized');
+    await ctx.closeLive();
+  });
+
+  it('refuses a socket from another site and accepts the app’s own origin', async () => {
+    const ctx = await liveApp();
+    await ctx.api.login('ada');
+    const auth = { authorization: `Bearer ${ctx.api.token()}` };
+
+    // A page on another host must not borrow the visitor's session cookie to open
+    // a socket - that would hand it this user's alerts.
+    const hostile = await upgradeAttempt(ctx.wsUrl, { ...auth, origin: 'https://evil.example' });
+    expect(hostile.code).toBe(403);
+    expect(hostile.rejectHeader).toBe('4403 origin_not_allowed');
+
+    // The dev frontend is a different port on the same host, so the guard has to
+    // ignore ports - otherwise it refuses the very page it protects.
+    const own = new URL(ctx.ctx.cfg.frontendOrigin);
+    const neighbour = `${own.protocol}//${own.hostname}:59999`;
+    expect((await upgradeAttempt(ctx.wsUrl, { ...auth, origin: neighbour })).status).toBe('accepted');
+
+    // Non-browser clients send no Origin and have no cross-site model to enforce.
+    expect((await upgradeAttempt(ctx.wsUrl, auth)).status).toBe('accepted');
     await ctx.closeLive();
   });
 

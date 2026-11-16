@@ -132,6 +132,20 @@ export function buildRouter(ctx: AppContext): Router {
       if (expectedProvider !== provider) {
         throw new ApiError('oauth_state_mismatch', 'OAuth state check failed. Sign in again.', 400);
       }
+      // A refusal arrives on this same URL: closing the consent sheet or hitting
+      // Cancel yields ?error=access_denied and no code. Sending the browser a
+      // JSON error document would be technically correct and practically useless,
+      // so the reason travels back to the sign-in screen, which can show it.
+      const refusal = String(query.error ?? '').trim();
+      if (refusal !== '') {
+        redirectAllowlisted(
+          ctx.cfg,
+          res,
+          `${ctx.cfg.frontendOrigin}/?auth_error=${encodeURIComponent(refusal)}`,
+        );
+        return;
+      }
+
       const code = String(query.code ?? '').trim();
       if (code === '') throw badRequest('code_missing', 'Authorization code missing from callback');
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   clampPercent,
   currentPeriod,
+  describeAuthError,
   formatDay,
   formatMoney,
   formatMonth,
@@ -83,5 +84,29 @@ describe('percent', () => {
     expect(clampPercent(-20)).toBe(0);
     expect(clampPercent(140)).toBe(100);
     expect(clampPercent(Number.NaN)).toBe(0);
+  });
+});
+
+describe('describeAuthError', () => {
+  it('says what a cancelled sign-in was', () => {
+    expect(describeAuthError('access_denied')).toMatch(/cancelled/i);
+    expect(describeAuthError('ACCOUNT_SELECTION_CANCELLED')).toMatch(/No account was chosen/);
+  });
+
+  it('stays silent when there was no error', () => {
+    expect(describeAuthError(null)).toBeNull();
+    expect(describeAuthError('')).toBeNull();
+    expect(describeAuthError('   ')).toBeNull();
+  });
+
+  it('names an unrecognised code without letting it carry markup', () => {
+    expect(describeAuthError('some_new_code')).toBe('Sign-in did not complete (some_new_code). Try again, or use the other provider.');
+    // The code arrives in a URL, so it is treated as hostile until proven plain.
+    expect(describeAuthError('<img src=x onerror=alert(1)>')).toBe(
+      'Sign-in did not complete (unknown). Try again, or use the other provider.',
+    );
+    expect(describeAuthError('a'.repeat(80))).toBe(
+      'Sign-in did not complete (unknown). Try again, or use the other provider.',
+    );
   });
 });

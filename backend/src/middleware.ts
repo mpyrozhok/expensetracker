@@ -65,6 +65,27 @@ export const csrfGuard: RequestHandler = (req, _res, next) => {
   next();
 };
 
+/**
+ * Whether an Origin-style value (a full origin, or a Referer URL) names this
+ * application. Comparison is by hostname with the port ignored, which is what
+ * lets the dev frontend on :5173 talk to the API on :8787 while a page served
+ * from anywhere else is refused. The same rule guards the cookie-session writes
+ * above and the WebSocket upgrade, so the two cannot drift apart.
+ */
+export function originBelongsToApp(cfg: AppConfig, raw: string): boolean {
+  const origin = hostnameOf(raw);
+  const own = hostnameOf(cfg.frontendOrigin);
+  return origin !== null && own !== null && origin === own;
+}
+
+function hostnameOf(raw: string): string | null {
+  try {
+    return new URL(raw).hostname;
+  } catch {
+    return null;
+  }
+}
+
 export function sessionCookieOptions(cfg: AppConfig) {
   return {
     httpOnly: true,

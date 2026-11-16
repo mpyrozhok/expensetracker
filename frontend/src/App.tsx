@@ -9,7 +9,7 @@ import { Avatar, EmptyState, ErrorBanner } from './components/ui.js';
 import { useBudgetAlerts } from './hooks/useBudgetAlerts.js';
 import { useExpenseData } from './hooks/useExpenseData.js';
 import { api } from './lib/api.js';
-import { currentPeriod, formatMonth, shiftPeriod } from './lib/format.js';
+import { currentPeriod, describeAuthError, formatMonth, shiftPeriod } from './lib/format.js';
 import type { ApiTransaction, ApiUser, Period } from './lib/types.js';
 
 type Tab = 'overview' | 'transactions' | 'categories';
@@ -60,6 +60,19 @@ function AuthGate(props: { onSignedIn: (user: ApiUser) => void }): React.JSX.Ele
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [mockEnabled, setMockEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A sign-in the provider refused comes back as ?auth_error=... on this page.
+  // It is shown in its own state so a later "backend unreachable" message cannot
+  // overwrite the reason the user is looking for.
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const refusal = describeAuthError(params.get('auth_error'));
+    if (refusal === null) return;
+    setAuthError(refusal);
+    // Consume it, so reloading does not reopen a consent sheet that long closed.
+    window.history.replaceState({}, '', window.location.pathname);
+  }, []);
 
   useEffect(() => {
     api
@@ -82,7 +95,7 @@ function AuthGate(props: { onSignedIn: (user: ApiUser) => void }): React.JSX.Ele
     <LoginScreen
       providers={providers}
       mockEnabled={mockEnabled}
-      error={error}
+      error={authError ?? error}
       onError={setError}
       onSignedIn={async () => {
         try {

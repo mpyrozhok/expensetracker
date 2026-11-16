@@ -108,6 +108,29 @@ describe('App', () => {
     expect(screen.getByText(/track spending by category/i)).toBeInTheDocument();
   });
 
+  it('explains a sign-in the provider refused', async () => {
+    // Where the browser lands after pressing Cancel on the consent sheet.
+    window.history.replaceState({}, '', '/?auth_error=access_denied');
+    installWebSocket();
+    installFetch({
+      'GET /api/auth/me': () => jsonResponse({ error: { code: 'unauthorized', message: 'Sign in required' } }, 401),
+      'GET /api/auth/providers': () =>
+        jsonResponse({
+          providers: [
+            { name: 'google', configured: true, authorize_path: '/api/auth/google/login' },
+            { name: 'github', configured: true, authorize_path: '/api/auth/github/login' },
+          ],
+          mock_auth_enabled: false,
+        }),
+    });
+    render(<App />);
+
+    expect(await screen.findByText(/Sign-in was cancelled/i)).toBeInTheDocument();
+    // The reason is consumed, so a reload will not raise it again.
+    expect(window.location.search).toBe('');
+    window.history.replaceState({}, '', '/');
+  });
+
   it('explains when the backend cannot be reached at all', async () => {
     installWebSocket();
     installFetch({

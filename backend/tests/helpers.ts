@@ -254,3 +254,51 @@ export class TestSocket {
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+export interface UpgradeOutcome {
+  status: 'accepted' | 'rejected';
+  code?: number;
+  rejectHeader?: string;
+}
+
+/**
+ * Drive the WebSocket handshake by hand. The `ws` client reports every refused
+ * upgrade as the same generic error, whereas what matters here is the HTTP status
+ * and headers of the refusal - including whether the refusal is parseable HTTP at
+ * all, which a five-digit status line is not.
+ *
+ * Rejects if the response cannot be parsed, so a malformed refusal fails loudly
+ * instead of looking like a refusal of some other kind.
+ */
+export function upgradeAttempt(wsUrl: string, headers: Record<string, string> = {}): Promise<UpgradeOutcome> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(wsUrl);
+    const req = http.request({
+      host: url.hostname,
+      port: url.port,
+      path: url.pathname,
+      headers: {
+        connection: 'upgrade',
+        upgrade: 'websocket',
+        'sec-websocket-key': 'AAAAAAAAAAAAAAAAAAAAAA==',
+        'sec-websocket-version': '13',
+        ...headers,
+      },
+    });
+    req.on('upgrade', (_res, socket) => {
+      socket.destroy();
+      resolve({ status: 'accepted' });
+    });
+    req.on('response', (res) => {
+      const rejectHeader = String(res.headers['x-websocket-reject'] ?? '');
+      res.resume();
+      resolve({ status: 'rejected', code: res.statusCode, rejectHeader });
+    });
+    req.on('error', (err) => reject(err));
+    req.setTimeout(4000, () => {
+      req.destroy();
+      reject(new Error('upgrade attempt timed out'));
+    });
+    req.end();
+  });
+}

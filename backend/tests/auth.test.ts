@@ -142,6 +142,34 @@ describe('SSO sign-in (stubbed providers)', () => {
     app.close();
   });
 
+  it('sends a refused sign-in back to the screen with the provider reason', async () => {
+    const app = testEnv({ fetchImpl: stubFetch() });
+    const login = await app.api.get('/api/auth/google/login').expect(302);
+    const state = String(new URL(headerOf(login, 'location')).searchParams.get('state'));
+
+    // Pressing Cancel on the consent sheet is the commonest way a real sign-in
+    // fails: the provider sends an error and no code, to this callback URL.
+    const refused = await app.api
+      .get(`/api/auth/google/callback?error=access_denied&state=${encodeURIComponent(state)}`)
+      .expect(302);
+    const back = new URL(headerOf(refused, 'location'));
+    expect(back.pathname).toBe('/');
+    expect(back.searchParams.get('auth_error')).toBe('access_denied');
+    // A refusal is not a session.
+    await app.api.get('/api/auth/me').expect(401);
+    app.close();
+  });
+
+  it('validates state even when the provider reports its own error', async () => {
+    // Otherwise a third party could push arbitrary error text into the app's own
+    // URL, which the sign-in screen then renders.
+    const app = testEnv({ fetchImpl: stubFetch() });
+    const res = await app.api.get('/api/auth/google/callback?error=access_denied&state=Zm9v.YmFy');
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('oauth_state_mismatch');
+    app.close();
+  });
+
   it('supports logout and refuses authenticated routes afterwards', async () => {
     const app = testEnv();
     await app.api.login('ada');

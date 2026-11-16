@@ -12,7 +12,7 @@ stub, which drives the same code path.
 | | |
 |---|---|
 | Stack | TypeScript, Node >= 20, Express 4, SQLite (`better-sqlite3`), `ws`, React 18, Vite 5, plain CSS |
-| Tests | `npm test` → **183 tests** (60 backend, 123 frontend), `npm run smoke` → **42 live checks** |
+| Tests | `npm test` → **207 tests** (80 backend, 127 frontend), `npm run smoke` → **42 live checks** |
 | Network in tests | none — SSO providers, tokens and userinfo are stubbed by injected `fetch` |
 | Containers | `docker/Dockerfile` + `docker/docker-compose.yml`; the image builds and the 42 smoke checks pass against the running container ([Docker](#docker)) |
 
@@ -270,7 +270,7 @@ safe (401 when a session is required); writes need the CSRF header.
 | `GET /api/auth/providers` | which providers are configured + whether the SSO stub is on |
 | `GET /api/auth/me` | current user (401 when anonymous) |
 | `GET /api/auth/:provider/login` | start the OAuth dance (302) |
-| `GET /api/auth/:provider/callback` | code exchange, user upsert, set cookie, redirect |
+| `GET /api/auth/:provider/callback` | code exchange, user upsert, set cookie, redirect; a provider refusal (Cancel, expired code) redirects with `?auth_error=<code>` and never becomes a session |
 | `POST /api/auth/mock/login` | test-mode SSO (`ALLOW_MOCK_AUTH=1`) |
 | `POST /api/auth/logout` | clear cookie **and** revoke the session generation |
 | `GET /api/categories` | list with `transaction_count` and `in_use` per category |
@@ -313,9 +313,17 @@ case-insensitively; currency must be `USD`. Amounts are stored as integer cents.
 ## 6. WebSocket and budget alerts
 
 Endpoint `ws://localhost:8787/ws` (Vite proxies it in dev). The upgrade carries
-the same credential as the API — the session cookie, or a Bearer header — and an
-unauthenticated upgrade is answered `4401` and destroyed before any application
-frame. A socket is bound to its user and only ever receives that user's alerts.
+the same credential as the API — the session cookie, or a Bearer header. A
+refusal is a plain HTTP response rather than a half-written status line: `401`
+(`X-WebSocket-Reject: 4401 unauthorized`) when the session is missing, bad, or
+revoked, and `403` (`4403 origin_not_allowed`) when the request carries an
+`Origin` from a host that is not this app's. The Origin rule is what stops a
+page on another site from opening a socket into a signed-in visitor's alerts:
+a browser always sends the header, ports are ignored so the dev frontend on
+:5173 still reaches the API on :8787, and a non-browser client that sends no
+`Origin` at all (the smoke script, a CLI) is allowed because it has no
+cross-site model to enforce. A socket is bound to its user and only ever
+receives that user's alerts.
 
 ### Client → server (all JSON)
 
@@ -401,31 +409,36 @@ transactions, budgets and alert ledger.
 ## 8. Tests
 
 ```bash
-npm test          # 183 tests, no network, no browser
+npm test          # 207 tests, no network, no browser
 npm run smoke     # 42 checks against a running server
 ```
 
-Backend (60) — Vitest + supertest against the real Express app and a real SQLite
+Backend (80) — Vitest + supertest against the real Express app and a real SQLite
 database, with `fetch` injected so no provider call can leave the process:
 
 | File | Covers |
 |---|---|
-| `auth.test.ts` | stubbed **Google and GitHub code exchange → user upsert → cookie**, identity keyed on provider+id, email lower-cased, second sign-in reuses the row, state mismatch rejected, **logout revokes a replayed token** and re-login works |
-| `ws-alerts.test.ts` | **50/80/100 pushed over a real WebSocket**, once-per-month across reconnects, ledger replay with read flags, `ack` → `alert-read`, anonymous sockets refused before any frame, **a socket revoked by logout refused**, malformed frames, ping/pong |
+| `auth.test.ts` | stubbed **Google and GitHub code exchange → user upsert → cookie**, identity keyed on provider+id, email lower-cased, second sign-in reuses the row, state mismatch rejected, **logout revokes a replayed token** and re-login works, pressing **Cancel at the provider** bounces to the sign-in screen with the reason (and state is still validated first) |
+| `session.test.ts` | the signing primitive itself: round-trip, expiry, wrong secret, tampered and forged signatures, malformed input that must not throw, legacy tokens read as generation 0, and **epoch-based revocation** |
+| `ws-alerts.test.ts` | **50/80/100 pushed over a real WebSocket**, once-per-month across reconnects, ledger replay with read flags, `ack` → `alert-read`, **a second window hears the ack**, anonymous sockets refused before any frame, **a socket revoked by logout refused**, **refused upgrades answered as readable 401/403** and a foreign `Origin` refused, malformed frames, ping/pong |
 | `authorization.test.ts` | user B cannot read or write user A's categories, transactions or budgets; a foreign id is 404; anonymous is 401; CSRF required |
 | `transactions.test.ts`, `search-filters.test.ts` | **create category + create transaction**, edit any field, delete, validation rejections, q/category/date-range/amount-range filters, sorting, paging, aggregates |
 | `budgets.test.ts` | set/get/remove per month, summary math, no-budget → null usage |
 | `alert-evaluation.test.ts` | exact 50/80/100 boundaries, no-budget silence, ledger once per month, independent months, **durable idempotent ack surviving a reopen** |
 | `categories.test.ts` | create, rename, unique-per-user case-insensitive, **409 while in use**, delete when unused |
 | `static-serving.test.ts` | production single-origin mode: SPA document, hashed assets, client-route fallback, `/api` errors still JSON |
+| `schema-migration.test.ts` | opening a **release-one database file upgrades it in place** — adds `session_epoch` and `read_at`, keeps every row, idempotent on the next open, and a fresh database is untouched |
 
-Frontend (123) — Vitest + Testing Library + `jsdom`, with `fetch` and
-`WebSocket` replaced by recording fakes: pure logic (`format`, `validation`),
-`LoginScreen`, `Dashboard` (totals, no-budget state, budget save/clear),
+Frontend (127) — Vitest + Testing Library + `jsdom`, with `fetch` and
+`WebSocket` replaced by recording fakes: pure logic (`format` — including the
+copy shown when a provider refuses a sign-in, which is mapped from the URL rather
+than echoed — and `validation`), `LoginScreen`, `Dashboard` (totals, no-budget
+state, budget save/clear),
 `Transactions` (table, empty states, filters, paging), `Categories` (create,
 rename, in-use delete), `useBudgetAlerts` (subscribe, ack, reconnect with
 backoff, cross-tab read), and an `App` integration suite that boots the whole
-component tree through sign-in, CRUD, budget save and a live alert.
+component tree through sign-in, a sign-in the provider refused, CRUD, budget save
+and a live alert.
 
 `scripts/smoke.mjs` is not a unit test: it drives a **running, built** server
 exactly as a browser does — cookie session, CSRF header, category policy, budget
@@ -441,7 +454,10 @@ radii, shadows).
 
 * **Sign-in** — `Continue with Google`, `Continue with GitHub`, per-provider
   availability, and the `Stub identity` form (`Stub as Google` / `Stub as
-  GitHub`) when `ALLOW_MOCK_AUTH` is on.
+  GitHub`) when `ALLOW_MOCK_AUTH` is on. A sign-in the provider refused — Cancel
+  on the consent sheet, an account never chosen, an expired code — comes back as
+  `?auth_error=<code>` on this page and is shown as a plain-language reason, once:
+  the parameter is consumed so a reload does not raise it again.
 * **Dashboard** — for the selected month: total spent, budget, remaining, usage
   percentage with a step progress bar, transaction count, over-budget styling,
   inline budget set/clear. With no budget: an explicit
@@ -544,6 +560,10 @@ Building it found two real problems, both now fixed in the Dockerfile:
   subscribe (the ledger is durable), but there is no email/push notification.
 * **No rate limiting, no audit log, no CSP `report-to`**, and the CSP still allows
   inline styles because Vite injects them in dev.
+* The WebSocket `Origin` rule compares **hostnames, ignoring ports**, so that the
+  dev frontend on :5173 can reach the API on :8787. That is right for a local
+  run and still refuses any other host; a real deployment would pin the exact
+  origin including the port once the front door is one origin anyway.
 * Pagination is `limit`/`offset`; at very large row counts a keyset cursor would
   be steadier.
 * The frontend relies on the WS reconnect loop plus re-fetch on focus; a

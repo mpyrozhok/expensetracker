@@ -91,3 +91,34 @@ export function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, value));
 }
+
+/**
+ * Plain-language copy for the OAuth `error` codes a provider sends back when a
+ * sign-in does not complete. The provider's own token is never shown verbatim:
+ * it arrives in a URL, so it is treated as untrusted input and only ever mapped
+ * to a fixed string, with a shape check before any fallback echo.
+ */
+const AUTH_ERROR_COPY: Record<string, string> = {
+  access_denied: 'Sign-in was cancelled. Choose a provider again whenever you are ready.',
+  consent_required: 'The provider asked for extra permission that was not granted. Try signing in again.',
+  account_selection_cancelled: 'No account was chosen, so signing in stopped.',
+  interaction_required: 'The provider needs you to sign in to it first. Try again.',
+  login_required: 'You are not signed in at that provider. Sign in there and try again.',
+  server_error: 'The provider had an error. Try signing in again in a moment.',
+  temporarily_unavailable: 'The provider is unavailable right now. Try again in a moment.',
+  invalid_grant: 'That sign-in attempt expired. Start again from the sign-in screen.',
+  invalid_scope: 'This deployment asked the provider for an unexpected permission (check the OAuth scopes).',
+  unauthorized_client: 'The provider does not recognise this app (check the OAuth client id and redirect URI).',
+};
+
+export function describeAuthError(code: string | null): string | null {
+  if (code === null) return null;
+  const key = code.trim().toLowerCase();
+  if (key === '') return null;
+  const known = AUTH_ERROR_COPY[key];
+  if (known) return known;
+  // An unrecognised code still beats a blank screen, but it is only echoed once
+  // it has been reduced to a shape that cannot carry markup.
+  const safe = /^[a-z0-9_-]{1,40}$/.test(key) ? key : 'unknown';
+  return `Sign-in did not complete (${safe}). Try again, or use the other provider.`;
+}
