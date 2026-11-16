@@ -372,10 +372,13 @@ Why blocking over auto-reassign:
 
 The list endpoint returns `transaction_count` and `in_use` per category, so the
 UI disables the Delete button *before* the user clicks it and explains why.
-Renaming is always allowed and never touches transactions. A transaction with no
-category is `category_id = null` and is reported as *Uncategorized* — that is a
-display state, not a row the app creates behind your back. Deleting a **user**
-cascades to their categories, transactions, budgets and alert ledger.
+Renaming is always allowed and never touches transactions. A category in use
+therefore can only be removed by reclassifying its transactions first, and the
+API insists on a category at creation (`category_id` is validated on both sides,
+with *"Choose a category"` inline and `400` server-side) — the nullable column
+plus an *Uncategorized* label exists for rows that arrive from elsewhere, not as
+a target the app deletes into. Deleting a **user** cascades to their categories,
+transactions, budgets and alert ledger.
 
 ---
 
