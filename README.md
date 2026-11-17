@@ -222,6 +222,13 @@ missing file is never an error. Node reads it once at process start, so
 **restart after editing `.env`** — `tsx watch` reloads on source changes, not on
 configuration.
 
+In the container the same rule has one consequence worth having in hand: the image
+ships `ENV` defaults (`PORT`, `DATABASE_PATH`, `STATIC_DIR`, …), so a `.env`
+mounted into the container cannot change those — use `-e` or compose for them. It
+is still useful there for what the image leaves unset, which is precisely the OAuth
+team: `-v ./backend/.env:/app/backend/.env:ro` yields `google_sso=configured` in the
+banner (checked, because "it should work" is how the last one got here).
+
 ### Google (OAuth 2.0 / OpenID Connect)
 
 1. <https://console.cloud.google.com/apis/credentials> → **Create credentials →
