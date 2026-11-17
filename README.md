@@ -259,6 +259,12 @@ GITHUB_CLIENT_SECRET=***
 GITHUB_REDIRECT_URI=http://localhost:8787/api/auth/github/callback
 ```
 
+Both providers have now been driven end to end against the real services on this
+machine (2026-11-17): each signed a session from a live profile fetch and created
+its own `users` row, which is the step no offline test can assert. The stub still
+exercises the same provisioning code path for tests and for anyone evaluating
+without credentials.
+
 ### Core variables
 
 | Variable | Default | Notes |
@@ -653,18 +659,17 @@ server on 8787 stayed out of the way:
 
 So the boundary of the testing is explicit rather than implied:
 
-* **No GitHub sign-in has completed against this code from this machine.** Google
-  has: a real Google account signed in on 2026-11-17, and the row it left behind
-  carries `provider=google` with a Google account id (the address itself is not
-  repeated in this file). For GitHub, `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`
-  are empty in `backend/.env`, so `GET /api/auth/providers` answers
-  `"github","configured":false` and the login route returns
-  `501 oauth_not_configured` without reaching github.com; no database here holds a
-  `provider=github` row with a numeric id. GitHub is the same code path with
-  different endpoints and a different profile shape, and that path is exercised
-  against a stubbed `fetch` with recorded payloads in the tests and the smoke run
-  alike — but nothing here proves a real GitHub OAuth app works end to end. PKCE
-  and ID token signature validation are open for both providers (below).
+* **Sign-in through both real providers works; what sits around it is not
+  hardened.** Google and GitHub have each completed a real authorization-code
+  sign-in against this code on 2026-11-17. The evidence is the rows they left:
+  one `provider=google` carrying a Google account id, one `provider=github`
+  carrying a numeric GitHub account id and the display name that GitHub's profile
+  endpoint returned. Neither shape is reachable through the stub, which issues
+  `mock-*` ids, so the token exchange, the profile fetch, the upsert, the session
+  cookie and the allow-listed return redirect all happened for real, on two
+  different redirect URIs. What is still open is the hardening listed below: no
+  PKCE, and the `id_token` is trusted from the userinfo response rather than
+  signature-validated.
 * **The browser pass checked behaviour, not appearance.** The app was driven in a
   real Chromium: stub sign-in, session survival across a reload, category create
   through the form, the transaction modal and its client-side validation, budget
