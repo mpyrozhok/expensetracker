@@ -12,7 +12,7 @@ provisioning and session code path.
 | | |
 |---|---|
 | Stack | TypeScript, Node >= 20, Express 4, SQLite (`better-sqlite3`), `ws`, React 18, Vite 5, plain CSS |
-| Tests | `npm test` → 243 tests (103 backend, 140 frontend); `npm run smoke` → 42 checks against a running server |
+| Tests | `npm test` → 244 tests (103 backend, 141 frontend); `npm run smoke` → 42 checks against a running server |
 | Network in tests | none — SSO providers, tokens and userinfo are stubbed by an injected `fetch` |
 | Containers | `docker/Dockerfile` + `docker/docker-compose.yml`, single-origin image with SQLite on a volume ([Docker](#docker)) |
 
@@ -457,7 +457,7 @@ transactions, budgets and alert ledger.
 ## 8. Tests
 
 ```bash
-npm test          # 243 tests, no network, no browser
+npm test          # 244 tests, no network, no browser
 npm run smoke     # 42 checks against a running server
 ```
 
@@ -480,7 +480,7 @@ database, with `fetch` injected so no provider call can leave the process:
 | `config-overrides.test.ts` | empty environment overrides fall back to defaults rather than becoming a blank redirect URI or port 0 |
 | `launch-env.test.ts` | the dev, start and container commands all carry `--env-file-if-exists`, the file reaches the process, and it never overrules a real environment variable |
 
-Frontend (140) — Vitest + Testing Library + `jsdom`, with `fetch` and `WebSocket`
+Frontend (141) — Vitest + Testing Library + `jsdom`, with `fetch` and `WebSocket`
 replaced by recording fakes: pure logic (`format` — including the copy shown when
 a provider refuses a sign-in, which is mapped from the URL rather than echoed —
 and `validation`), `LoginScreen`, `Dashboard` (totals, no-budget state, budget
