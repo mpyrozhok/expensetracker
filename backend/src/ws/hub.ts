@@ -105,17 +105,21 @@ export class BudgetHub {
 
   /**
    * Called after any transaction/budget mutation. Evaluates only periods that
-   * at least one socket of this user has subscribed to; alerts that are new in
-   * the ledger are pushed to those sockets.
+   * at least one socket of this user has subscribed to; when something is new
+   * in the ledger, the period's FULL alert list is pushed to those sockets.
+   *
+   * The frame must be the whole ledger, not just the fresh entry: the client
+   * treats each frame as the period's complete state and replaces its entries
+   * with it, so a partial frame would silently drop the thresholds that fired
+   * earlier in the same session (the 50% row vanishing once 80% crossed).
+   * Freshness rides on the `new` flag, which the client uses for toasts.
    */
   notifyBudgetChange(userId: number, period: Period): void {
     const targets = this.clientsOf(userId, period);
     if (targets.length === 0) return;
     const evaluation = this.alerts.evaluate(userId, period);
     if (!evaluation || evaluation.fresh.length === 0) return;
-    const alerts = this.alerts
-      .toAlerts(userId, evaluation)
-      .filter((alert) => evaluation.fresh.includes(alert.threshold));
+    const alerts = this.alerts.toAlerts(userId, evaluation);
     for (const client of targets) send(client.socket, { type: 'budget-alerts', period, alerts });
   }
 

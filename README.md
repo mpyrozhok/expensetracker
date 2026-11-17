@@ -363,11 +363,14 @@ receives that user's alerts.
 `welcome` · `subscription` · `unsubscribed` · `budget-alerts` ·
 `alert-read` · `pong` · `error{code,message}`
 
-`budget-alerts` carries `ApiAlert[]`, where each alert has `period`, `threshold`,
-`budget`, `spent`, `usage_percent`, `currency`, `fired_at`, and the two flags
-that drive the UI: `new` (first crossing → toast) and `read` (acknowledged →
-panel only). Malformed frames get an `error` frame (`invalid_json`,
-`unknown_channel`, `unknown_message_type`, `alert_invalid`) and keep the socket.
+`budget-alerts` carries `ApiAlert[]` — **the complete ledger for the period**,
+not just the changed entries — so the client can replace its list with each
+frame without losing thresholds that fired earlier in the session. Each alert
+has `period`, `threshold`, `budget`, `spent`, `usage_percent`, `currency`,
+`fired_at`, and the two flags that drive the UI: `new` (first crossing →
+toast) and `read` (acknowledged → panel only). Malformed frames get an `error`
+frame (`invalid_json`, `unknown_channel`, `unknown_message_type`,
+`alert_invalid`) and keep the socket.
 
 ### Alert rules
 

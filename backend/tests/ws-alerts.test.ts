@@ -61,6 +61,12 @@ describe('budget alerts over WebSocket', () => {
       (m) => m.type === 'budget-alerts' && newThresholds(m as AlertsFrame).some((a) => a.threshold === 80),
     );
     expect(newThresholds(at80 as AlertsFrame).map((a) => a.threshold)).toEqual([80]);
+    // The frame carries the whole ledger for the period, not only the fresh
+    // entry: the client replaces its entries with each frame, so a partial
+    // frame would drop the 50% alert from the panel mid-session.
+    expect(
+      (at80 as AlertsFrame).alerts.filter((a) => a.threshold === 50),
+    ).toEqual([expect.objectContaining({ threshold: 50, new: false })]);
 
     await spend(ctx, ctx.categoryId, 20, dayInCurrentMonth(4));
     const at100 = await ctx.socket.waitFor(
@@ -68,8 +74,10 @@ describe('budget alerts over WebSocket', () => {
     );
     const alert = newThresholds(at100 as AlertsFrame)[0];
     expect(alert).toMatchObject({ threshold: 100, usage_percent: 100, budget: 100, spent: 100 });
+    expect((at100 as AlertsFrame).alerts.map((a) => a.threshold).sort((a, b) => a - b)).toEqual([50, 80, 100]);
     expect(ctx.socket.firedThresholds()).toEqual([50, 80, 100]);
-    // A threshold is never repeated: each appeared in exactly one frame.
+    // A threshold is never repeated as *new*: each appeared with new:true in
+    // exactly one frame (later frames may re-list it with new:false).
     expect(ctx.socket.firedThresholds()).toHaveLength(new Set(ctx.socket.firedThresholds()).size);
 
     ctx.socket.close();
