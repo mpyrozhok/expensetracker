@@ -54,18 +54,31 @@ function providerDefaults(p: ProviderName) {
       };
 }
 
+/**
+ * An override that is present but empty means "not set". Dotfiles and compose
+ * passthroughs routinely export `GOOGLE_CLIENT_SECRET=` or `PORT=`, and for
+ * these keys an empty value is a broken launch rather than a default: an empty
+ * redirect URI sends the provider a `redirect_uri=` of nothing, and an empty
+ * PORT became port 0.
+ */
+function override(name: string): string | undefined {
+  const value = env[name];
+  return value === undefined || value === '' ? undefined : value;
+}
+
 function providerConfig(p: ProviderName): OAuthProviderConfig {
   const upper = p.toUpperCase();
   const d = providerDefaults(p);
-  const port = env.PORT ?? '8787';
+  const port = override('PORT') ?? '8787';
   return {
-    clientId: env[`${upper}_CLIENT_ID`] ?? '',
-    clientSecret: env[`${upper}_CLIENT_SECRET`] ?? '',
+    clientId: override(`${upper}_CLIENT_ID`) ?? '',
+    clientSecret: override(`${upper}_CLIENT_SECRET`) ?? '',
     redirectUri:
-      env[`${upper}_REDIRECT_URI`] ?? `http://localhost:${port}/api/auth/${p}/callback`,
-    authorizeUrl: env[`${upper}_AUTHORIZE_URL`] ?? d.authorizeUrl,
-    tokenUrl: env[`${upper}_TOKEN_URL`] ?? d.tokenUrl,
-    userInfoUrl: env[`${upper}_USERINFO_URL`] ?? d.userInfoUrl,
+      override(`${upper}_REDIRECT_URI`) ??
+      `http://localhost:${port}/api/auth/${p}/callback`,
+    authorizeUrl: override(`${upper}_AUTHORIZE_URL`) ?? d.authorizeUrl,
+    tokenUrl: override(`${upper}_TOKEN_URL`) ?? d.tokenUrl,
+    userInfoUrl: override(`${upper}_USERINFO_URL`) ?? d.userInfoUrl,
     scopes: (env[`${upper}_SCOPES`] ?? '').split(' ').filter(Boolean).length
       ? (env[`${upper}_SCOPES`] as string).split(' ').filter(Boolean)
       : d.scopes,
@@ -87,16 +100,16 @@ export function loadConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 
   const cfg: AppConfig = {
     env: nodeEnv,
-    port: Number(env.PORT ?? 8787),
-    host: env.HOST ?? '0.0.0.0',
+    port: Number(override('PORT') ?? 8787),
+    host: override('HOST') ?? '0.0.0.0',
     databasePath,
     sessionSecret:
-      env.SESSION_SECRET ??
+      override('SESSION_SECRET') ??
       (nodeEnv === 'production'
         ? ''
         : 'dev-insecure-session-secret-change-me-0123456789abcdef'),
-    sessionTtlSeconds: Number(env.SESSION_TTL_SECONDS ?? 60 * 60 * 24 * 30),
-    frontendOrigin: env.FRONTEND_ORIGIN ?? 'http://localhost:5173',
+    sessionTtlSeconds: Number(override('SESSION_TTL_SECONDS') ?? 60 * 60 * 24 * 30),
+    frontendOrigin: override('FRONTEND_ORIGIN') ?? 'http://localhost:5173',
     cookieSecure: bool(env.COOKIE_SECURE, nodeEnv === 'production'),
     allowMockAuth: bool(env.ALLOW_MOCK_AUTH, nodeEnv !== 'production'),
     providers: {

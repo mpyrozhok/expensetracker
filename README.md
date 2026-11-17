@@ -12,9 +12,9 @@ stub, which drives the same code path.
 | | |
 |---|---|
 | Stack | TypeScript, Node >= 20, Express 4, SQLite (`better-sqlite3`), `ws`, React 18, Vite 5, plain CSS |
-| Tests | `npm test` → **207 tests** (80 backend, 127 frontend), `npm run smoke` → **42 live checks** |
+| Tests | `npm test` → **243 tests** (103 backend, 140 frontend), `npm run smoke` → **42 live checks** |
 | Network in tests | none — SSO providers, tokens and userinfo are stubbed by injected `fetch` |
-| Containers | `docker/Dockerfile` + `docker/docker-compose.yml`; the image builds and the 42 smoke checks pass against the running container ([Docker](#docker)) |
+| Containers | `docker/Dockerfile` + `docker/docker-compose.yml`; the image builds, `docker compose up` runs, and the 42 smoke checks pass against the compose-started container ([Docker](#docker)) |
 
 ---
 
@@ -557,7 +557,9 @@ Provided as an optional deliverable, **built and run on this machine**:
   toolchain, then a slim Node 22 runtime running as `node`), `HEALTHCHECK` on
   `/api/health`, SQLite on a `/data` volume, one origin for API + WS + SPA.
 * `docker/docker-compose.yml` — one service, port mapping, named volume, env
-  passthrough for the SSO credentials.
+  passthrough for the SSO credentials and the two redirect URIs, and a healthcheck.
+* `docker/.env.example` — the variables compose interpolates, including the ones it
+  needs before it will run `ps` or `logs`.
 
 ```bash
 # build (see the --load note below) and run without compose
@@ -565,8 +567,12 @@ docker buildx build --load -f docker/Dockerfile -t expense-tracker:local .
 docker run --rm -p 8787:8787 -e SESSION_SECRET=$(openssl rand -hex 32) \
   -e ALLOW_MOCK_AUTH=1 -v expense-data:/data expense-tracker:local
 
-# or via compose
-cd docker && SESSION_SECRET=$(openssl rand -hex 32) docker compose up --build
+# or via compose. Compose needs the variables for every subcommand — `ps`
+# and `logs` included — so they go in docker/.env rather than in front of one
+# command. On this machine the build step additionally needs COMPOSE_BAKE=0
+# (see "Running compose found three more things" below).
+cd docker && cp .env.example .env && $EDITOR .env
+COMPOSE_BAKE=0 docker compose up -d --build
 ```
 
 ### Verified with the container running
@@ -594,25 +600,68 @@ Building it found two real problems, both now fixed in the Dockerfile:
    empty. `docker buildx build --load` is what actually lands the image — hence the
    header comment in the Dockerfile.
 
-> **Still unverified:** `docker compose` itself — neither the v2 plugin nor the v1
-> standalone binary is installed here, so `docker compose up` and even
-> `docker compose config` cannot run. What was verified instead is the exact thing
-> the compose file describes: this image, the same environment
-> (`SESSION_SECRET`, `ALLOW_MOCK_AUTH`, `FRONTEND_ORIGIN`, `DATABASE_PATH`), the
-> same port mapping and a named volume at `/data`. The compose file's YAML was
-> checked structurally, but treat the `compose up` path as untested until it runs
-> where compose exists.
+### Running compose found three more things
+
+Compose is installed now (2.37.1 against buildx 0.5.1, both from Ubuntu), so this
+is the `up` path observed rather than inferred.
+
+1. **`docker compose build` and `up --build` fail as shipped.** Compose drives
+   `docker buildx bake` and passes `--metadata-file`, which that buildx does not
+   know: `Error: unknown flag: --metadata-file`, delivered as bake's help text and
+   no image left behind. `COMPOSE_BAKE=0 docker compose build` takes the classic
+   path and lands `expense-tracker:local`, which is what the compose file's header
+   now says. A newer buildx (Docker's own apt repo ships a matching pair) removes
+   the need for the flag.
+2. **Every subcommand interpolates, not just `up`.** Because `SESSION_SECRET` is
+   `${SESSION_SECRET:?required}`, a plain `docker compose ps` after a successful
+   `up` fails with `required variable SESSION_SECRET is missing a value`. `docker/.env`
+   is the answer — compose loads it from the project directory, `.gitignore` already
+   excluded it, and `docker/.env.example` is now provided to copy.
+3. **`PORT` does not move the OAuth callback.** The default redirect URI is built
+   from the port the app listens on inside the container (8787), however the host
+   port is mapped. Published on 8788, both providers were handed
+   `http://localhost:8787/api/auth/<provider>/callback`: a `redirect_uri_mismatch`
+   on the real provider. The compose comment that claimed the opposite was wrong
+   and has been corrected, and `GOOGLE_REDIRECT_URI` / `GITHUB_REDIRECT_URI` are
+   now passed through — they were described in a comment but never forwarded, so
+   the documented override could not work. Two related fixes in `config.ts`: an
+   override that is present but empty (`GOOGLE_REDIRECT_URI=`, which a `.env` file
+   or a `${VAR:-}` passthrough produces) now falls back to the default instead of
+   becoming a redirect to nothing, and an empty `PORT` no longer means port 0.
+
+What the compose path was then checked against, on host port 8788 so the dev
+server on 8787 stayed out of the way:
+
+| Check | Result |
+|---|---|
+| `docker compose config` | parses and resolves — the YAML is valid, not merely plausible |
+| `COMPOSE_BAKE=0 docker compose up -d --build` | builds, starts, `ps` reports `running healthy` |
+| `npm run smoke -- --url http://localhost:8788` | **42/42** against the compose-started container |
+| `GET /` and `GET /api/nope` | the SPA document, and a JSON 404 — API paths stay out of the SPA fallback |
+| bare `GET /ws` | `401` with no session; `403` with `Origin: http://evil.example` |
+| `docker compose restart` | the transaction, category and budget created before it, and the session issued before it, all read back after |
+| `down`, then `up` with a different `SESSION_SECRET` | the named volume still has the data; the old cookie answers `401`, which is revocation surviving a rebuild |
+| credentials in `docker/.env` | `providers` answers `configured: true` for both with `mock_auth_enabled: false`, the mock route answers `mock_auth_disabled`, and the two login routes 302 to `accounts.google.com` and `github.com` |
+| redirect URI, override set to `:8788` | the authorize URL carries `redirect_uri=…localhost:8788…` |
+| redirect URI, override present but empty | falls back to `:8787` rather than sending an empty `redirect_uri=` |
+| `docker compose down` | container and network removed, named volume kept (its data is the point); removed here with `docker volume rm` |
 
 ### What has not been verified, in plain terms
 
 So the boundary of the testing is explicit rather than implied:
 
-* **No real Google or GitHub sign-in has ever been attempted.** The code exchange,
-  profile fetch and account upsert run against a stubbed `fetch` with recorded
-  provider payloads, in tests and in the smoke run alike. A real tenant needs the
-  redirect URI registered, and PKCE plus ID token signature validation are still
-  open (below). Everything up to and after the network call is tested; the network
-  call itself is not.
+* **No GitHub sign-in has completed against this code from this machine.** Google
+  has: a real Google account signed in on 2026-11-17, and the row it left behind
+  carries `provider=google` with a Google account id (the address itself is not
+  repeated in this file). For GitHub, `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`
+  are empty in `backend/.env`, so `GET /api/auth/providers` answers
+  `"github","configured":false` and the login route returns
+  `501 oauth_not_configured` without reaching github.com; no database here holds a
+  `provider=github` row with a numeric id. GitHub is the same code path with
+  different endpoints and a different profile shape, and that path is exercised
+  against a stubbed `fetch` with recorded payloads in the tests and the smoke run
+  alike — but nothing here proves a real GitHub OAuth app works end to end. PKCE
+  and ID token signature validation are open for both providers (below).
 * **The browser pass checked behaviour, not appearance.** The app was driven in a
   real Chromium: stub sign-in, session survival across a reload, category create
   through the form, the transaction modal and its client-side validation, budget
@@ -623,9 +672,6 @@ So the boundary of the testing is explicit rather than implied:
   visual quality: spacing, colour and type hierarchy were read from the DOM and
   computed styles rather than judged, no screenshot has been compared against
   anything, only Chromium has been used, and no screen reader has read the app.
-* **`docker compose` has never been run** — no compose binary exists on this
-  machine, so `compose up` is untested even though everything it describes is
-  (see the block above this list).
 * **Single-user scale.** The SQLite write path, WAL checkpointing and many
   concurrent sockets have not been load-tested; the app is correct at the scale of
   one person's finances, which is what the brief asked for.

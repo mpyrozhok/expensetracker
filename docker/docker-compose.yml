@@ -1,8 +1,18 @@
 # Local containerized run:
 #
 #   cd docker
-#   SESSION_SECRET=$(openssl rand -hex 32) docker compose up --build
+#   cp .env.example .env      # then fill in SESSION_SECRET
+#   docker compose up -d --build
 #   open http://localhost:8787
+#
+# Compose interpolates this file for every subcommand, `ps` and `logs`
+# included, which is why the variables live in .env rather than in front of
+# one command.
+#
+# On Debian/Ubuntu the packaged compose (2.37) drives `buildx bake` with a
+# --metadata-file flag the packaged buildx (0.5.1) rejects; prefix the build
+# with COMPOSE_BAKE=0, or run `docker buildx build --load` from the repository
+# root, which needs no flag.
 #
 # The app is single-origin: Express serves the API, the WebSocket upgrade on
 # /ws and the compiled SPA, so no reverse proxy or CORS setup is needed.
@@ -36,11 +46,15 @@ services:
       GOOGLE_CLIENT_SECRET: '${GOOGLE_CLIENT_SECRET:-}'
       GITHUB_CLIENT_ID: '${GITHUB_CLIENT_ID:-}'
       GITHUB_CLIENT_SECRET: '${GITHUB_CLIENT_SECRET:-}'
-      # Redirect URIs default to this exact shape, which is what the
-      # port mapping above exposes:
+      # The callback defaults to the port the app listens on INSIDE the
+      # container (8787); the host-side mapping above does not change it.
+      # Published on any other host port, the provider is told to return to
+      # 8787 and the callback fails with a redirect_uri mismatch, so when
+      # PORT is not 8787 set both to the URI you registered:
       #   http://localhost:${PORT}/api/auth/<provider>/callback
-      # Override with GOOGLE_REDIRECT_URI / GITHUB_REDIRECT_URI when
-      # the container is reached through another host name.
+      # Present-but-empty means unset here, so leaving these blank is safe.
+      GOOGLE_REDIRECT_URI: '${GOOGLE_REDIRECT_URI:-}'
+      GITHUB_REDIRECT_URI: '${GITHUB_REDIRECT_URI:-}'
     volumes:
       # SQLite runs in WAL mode, so the directory itself is the state.
       - expense-data:/data
