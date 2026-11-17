@@ -8,7 +8,7 @@
  * read-state replay after a reconnect.
  *
  * Usage:
- *   npm run dev            # or: npm run build && node backend/dist/index.js
+ *   npm run dev            # or: npm run build && npm start
  *   node scripts/smoke.mjs [--url http://localhost:8787] [--keep]
  *
  * `--keep` leaves the created data in place; by default the check writes its own
@@ -122,6 +122,20 @@ async function main() {
   );
 
   /* -------------------------------------------------------------------- auth */
+
+  // Everything below signs in through the stub, so a server whose .env sets
+  // ALLOW_MOCK_AUTH=0 is not broken, merely untestable this way. Without this the
+  // stub's 404 cascades into nine failures and the script's advice at the end is
+  // "is the server running?" — which sends you off to look at the wrong thing.
+  if (providers.json?.mock_auth_enabled !== true) {
+    console.error(
+      `\nSSO stub is off on ${BASE} (mock_auth_enabled=false), and every check after the first two signs in through it.\n` +
+        'Point it at a server with the stub enabled, e.g.:\n' +
+        '  ALLOW_MOCK_AUTH=1 DATABASE_PATH=/tmp/smoke.db npm run dev\n' +
+        'or use --url to aim at one that already has it on.',
+    );
+    process.exit(2);
+  }
 
   const stamp = Date.now();
   const first = await call('POST', '/auth/mock/login', { provider: 'google', mock_user: `smoke-${stamp}` });

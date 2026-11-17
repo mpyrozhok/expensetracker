@@ -82,7 +82,8 @@ export function LoginScreen(props: LoginScreenProps): React.JSX.Element {
 
         {!props.providers.every((provider) => provider.configured) ? (
           <p className="field__hint">
-            A provider is greyed out until its OAuth credentials are set in <code>backend/.env</code>. See{' '}
+            A provider is greyed out until its OAuth credentials are set in <code>backend/.env</code>, and the server
+            reads that file once when it starts, so it needs a restart after editing. See{' '}
             <code>README.md</code> for the Google and GitHub setup.
           </p>
         ) : null}

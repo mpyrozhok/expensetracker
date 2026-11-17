@@ -207,8 +207,20 @@ Both providers use the authorization-code flow:
 redirect to `FRONTEND_ORIGIN/#signed-in`. Identity is keyed on
 **(provider, provider_user_id)** because GitHub does not always expose an email.
 
-Copy `backend/.env.example` to `backend/.env`; every variable below is read from
-the environment.
+Copy `backend/.env.example` to `backend/.env`. Every variable below is read from
+the environment, and Node puts the file there: `npm run dev`, `npm start` and the
+container `CMD` all pass `--env-file-if-exists=.env`. There is deliberately no
+dotenv in the runtime, which has one consequence worth knowing before it costs you
+an hour — **a `.env` nothing loads is silent**: it sits there, correctly written,
+and every provider stays greyed out. Anything launched other than through those
+commands (a bare `node backend/dist/index.js`, an editor run configuration) reads
+no file at all.
+
+A variable already in the environment wins over the file, so `DATABASE_PATH=… npm
+start`, CI secrets and `docker run -e` all override it without editing it, and a
+missing file is never an error. Node reads it once at process start, so
+**restart after editing `.env`** — `tsx watch` reloads on source changes, not on
+configuration.
 
 ### Google (OAuth 2.0 / OpenID Connect)
 
