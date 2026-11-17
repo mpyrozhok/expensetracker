@@ -162,8 +162,8 @@ test suite pins that directly.
   a timestamp comparison.
 * `Authorization: Bearer <token>` is accepted on the same routes, which is how
   the WebSocket tests and `scripts/smoke.mjs` drive the API.
-* Revocation is per user (all devices), not per device — see
-  [Limitations](#10-limitations-and-next-steps).
+* Revocation is per user rather than per device: one epoch per account, so
+  signing out anywhere signs every session out.
 
 ### Configuration loading
 
@@ -595,43 +595,3 @@ mode on the mounted volume as the non-root user, and keep both data and issued
 sessions across `docker restart` and `docker compose down` + `up` (a new
 `SESSION_SECRET` on the way back up invalidates old cookies, which is the
 revocation rule doing its job).
-
----
-
-## 10. Limitations and next steps
-
-* **No PKCE** on the OAuth code flow (state + nonce + a server-side code exchange
-  are there, but PKCE is what Google recommends for public clients), and no ID
-  token signature validation — the userinfo endpoint is trusted over `id_token`.
-  Both are the first things to add before deploying anywhere.
-* **No rate limiting** (the WebSocket subscribe path included), no audit log, and
-  the CSP still allows inline styles because Vite injects them in dev.
-* **Revocation is per user, not per device** — one epoch per account means logging
-  out anywhere logs every session out. A `sessions` table would give device-level
-  sign-out and an admin kill switch.
-* **The WebSocket `Origin` rule compares hostnames, ignoring ports**, so the dev
-  frontend on :5173 can reach the API on :8787. Right for a local run, and it
-  still refuses any other host; a deployment on one origin should pin the exact
-  origin including the port.
-* **USD only.** Amounts are cents and `currency` is stored per row, so a second
-  currency is a UI and validation change plus a per-month currency constraint on
-  budgets.
-* **No account linking** (optional in the brief): signing in with Google and
-  GitHub creates two accounts.
-* **SQLite is single-writer**, and neither the write path nor many concurrent
-  sockets have been load-tested — the app is sized for one person's finances.
-  A Postgres swap is contained in `services/sql.ts` and `db.ts`.
-* **Alert thresholds are fixed** at 50/80/100 and pushes are live-only: a
-  threshold crossed while every socket was closed is delivered on the next
-  subscribe (the ledger is durable), but there is no email or push notification.
-* **Data is refreshed by events rather than continuously.** Threshold crossings
-  arrive over the WebSocket in every open tab immediately; REST data refetches on
-  boot, on month change, after a mutation and on retry, so a change made in
-  another tab appears at the next such event. A focus or `visibilitychange`
-  refetch would close that gap.
-* **Pagination is `limit`/`offset`**; at very large row counts a keyset cursor
-  would be steadier.
-* **Checked in Chromium only, and with no assistive technology.** Behaviour,
-  requests and console cleanliness were verified by driving the built UI; spacing
-  and type hierarchy have not been judged against a design, other engines have
-  not rendered it, and no screen reader has read it.
