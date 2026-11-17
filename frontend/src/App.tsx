@@ -180,7 +180,11 @@ function Workspace(props: { user: ApiUser; onSignedOut: () => void }): React.JSX
       </nav>
 
       <main className="page">
-        <MonthBar period={period} onChange={setPeriod} />
+        {/* Categories is not period-scoped: the list and its "N transactions"
+            counts are all-time, and the add-transaction form is not reachable
+            from that tab. The control stayed visible there but could only
+            trigger refetches of data the tab does not render. */}
+        {tab === 'categories' ? null : <MonthBar period={period} onChange={setPeriod} />}
 
         {notice ? <ErrorBanner message={notice} onRetry={() => setNotice(null)} /> : null}
 

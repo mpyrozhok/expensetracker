@@ -265,6 +265,26 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Delete Groceries' })).toBeDisabled();
   });
 
+  it('hides the month control on Categories, where no view reads the period', async () => {
+    const harness = await renderSignedIn();
+    const summariesBefore = harness.calls.filter((call) => call.path === '/api/budgets/summary').length;
+
+    await userEvent.click(screen.getByRole('tab', { name: /categories/i }));
+    expect(screen.queryByRole('button', { name: 'Next month' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /jump to current month/i })).not.toBeInTheDocument();
+
+    // Coming back restores it, still driving the month it always drove.
+    await userEvent.click(screen.getByRole('tab', { name: /overview/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    const next = shiftPeriod(currentPeriod(), 1);
+    expect(await screen.findByText(formatMonth(next))).toBeInTheDocument();
+    await waitFor(() =>
+      expect(harness.calls.filter((call) => call.path === '/api/budgets/summary').length).toBeGreaterThan(
+        summariesBefore,
+      ),
+    );
+  });
+
   it('navigates months and asks the backend for that period', async () => {
     const harness = await renderSignedIn();
     const next = shiftPeriod(currentPeriod(), 1);

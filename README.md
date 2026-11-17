@@ -529,7 +529,10 @@ radii, shadows).
   bounds in force and are editable only in custom mode, so a filter cannot
   disagree with the header quietly.
 * **Categories** — inline rename, create, delete disabled with an explanation
-  while in use.
+  while in use. The month control is not rendered on this tab: the list and its
+  `N transactions` counts are all-time, the add-transaction form is not reachable
+  from here, so the only thing it could do was re-request a month this tab does
+  not display.
 * **Alerts** — toast for a newly crossed threshold, panel for the month's ledger,
   connection badge with reconnect.
 * **States** — skeletons on the first load of each data block, inline errors with
